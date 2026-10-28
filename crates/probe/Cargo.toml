@@ -1,0 +1,14 @@
+[package]
+name = "probe"
+description = "Reverse-engineering probe: logs DS2 warp calls and player/bonfire state to a file"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "pocket_bonfire_probe"
+crate-type = ["cdylib"]
+
+[dependencies]
+ds2.workspace = true
+minhook.workspace = true
