@@ -6,7 +6,7 @@ resolver = "2"
 version = "0.8.0"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/mutant-factory/ds2-pocket-bonfire"
+repository = "https://github.com/TheMutantFactory/ds2-pocket-bonfire"
 
 [workspace.dependencies]
 ds2 = { path = "crates/ds2" }
