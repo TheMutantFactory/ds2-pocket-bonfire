@@ -1,8 +1,8 @@
 //! The Pocket Bonfire. See `docs/design.md`.
 //!
 //! A pocket bonfire is a saved position on a real "host" bonfire in the same map. Using the item
-//! places it, or, standing beside it, rests there. After resting there, dying brings the player back:
-//! the game respawns them at the host, and the DLL moves them to the saved position.
+//! places it, or, standing beside it, rests there. Once placed, dying brings the player back: the game
+//! respawns them at the host, and the DLL moves them to the saved position.
 //!
 //! Not in this version: Travel to it from other bonfires, the limits on where it can be placed, and
 //! anything visible at the spot.
@@ -243,7 +243,9 @@ impl Mod {
             beep(false);
             return;
         };
-        let bonfire = Bonfire { map, host, pos: [here[0], here[1], here[2]], respawn_here: false };
+        // Placing alone makes it the respawn point, so the host being the last bonfire isn't just a
+        // convenience: it's already where the game will send the player back to.
+        let bonfire = Bonfire { map, host, pos: [here[0], here[1], here[2]], respawn_here: true };
         self.save(bonfire);
         log::line(format!("placed: {bonfire:?}"));
         beep(true);
