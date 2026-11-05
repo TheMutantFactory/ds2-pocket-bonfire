@@ -1,0 +1,22 @@
+[workspace]
+members = ["crates/ds2", "crates/probe", "crates/pocket-bonfire"]
+resolver = "2"
+
+[workspace.package]
+version = "0.10.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/TheMutantFactory/ds2-pocket-bonfire"
+
+[workspace.dependencies]
+ds2 = { path = "crates/ds2" }
+minhook = "0.9"
+
+# A panic must never unwind into game code.
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+lto = true
+codegen-units = 1
