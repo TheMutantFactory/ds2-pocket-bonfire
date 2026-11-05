@@ -41,8 +41,14 @@ pub const SIGNATURES: [(&str, &str); 6] = [
     ("ItemGive", AOB_ITEM_GIVE),
 ];
 
-/// DS2S-META's `SPECIAL_EFFECT.BONFIREREST`: refills HP and estus without touching enemies.
+/// DS2S-META's `SPECIAL_EFFECT.BONFIREREST`: refills HP and estus without touching enemies. The game
+/// itself applies this when the player rests at a real bonfire.
 pub const SP_EFFECT_BONFIRE_REST: i32 = 110_000_010;
+
+/// The item's row in ItemParam. Using an item applies its Effect ID through `ApplySpEffect` after the
+/// animation, even when no such effect exists, so the row's Effect ID is set to this same number and
+/// the DLL watches for it.
+pub const POCKET_BONFIRE_ITEM: u32 = 60_355_010;
 
 /// Within the warp struct.
 pub const OFF_WARP_MAP_ID: usize = 0x08;
@@ -57,8 +63,14 @@ pub const OFF_EVENT_MANAGER: usize = 0x70;
 /// EventManager children.
 pub const OFF_WARP_MANAGER: usize = 0x70;
 pub const OFF_BONFIRE_MANAGER: usize = 0x58;
+/// Set in the bonfire manager while a rest menu it opened is up; the entry check of the rest call
+/// reads it, and the probe saw it go to 1 on the call and back to 0 by the next one.
+pub const OFF_REST_MENU_ACTIVE: usize = 0x38;
 /// PlayerCtrl child.
 pub const OFF_SP_EFFECT_CTRL: usize = 0x3e0;
+/// BaseA child, and the character name within it (DS2S-META `PlayerName`).
+pub const OFF_PLAYER_MISC: usize = 0xa8;
+pub const OFF_PLAYER_NAME: usize = 0x114;
 /// `game_state` while the player is in control.
 pub const GAME_STATE_PLAYABLE: u32 = 30;
 /// Within PlayerDataMap: three copies of y, z, x, 0x10 apart. Writing all three moves the player.
@@ -231,6 +243,22 @@ impl Addresses {
         let apply: Apply = std::mem::transmute(self.apply_sp_effect);
         apply(ctrl, &effect, 0, 0, 0, -1.0);
         true
+    }
+
+    /// The character's name as raw UTF-16, up to the terminator. Saved state is kept per character.
+    pub fn character_name(&self) -> Option<Vec<u16>> {
+        let bytes = mem::read_bytes(mem::ptr(self.base_a()? + OFF_PLAYER_MISC)? + OFF_PLAYER_NAME, 32)?;
+        let units: Vec<u16> =
+            bytes.as_chunks::<2>().0.iter().map(|b| u16::from_le_bytes(*b)).take_while(|&u| u != 0).collect();
+        (!units.is_empty()).then_some(units)
+    }
+
+    /// Whether a rest menu opened by `rest_at_bonfire` is still open.
+    pub fn rest_menu_open(&self) -> bool {
+        self.event_manager()
+            .and_then(|em| mem::ptr(em + OFF_BONFIRE_MANAGER))
+            .and_then(|manager| mem::read::<u32>(manager + OFF_REST_MENU_ACTIVE))
+            .is_some_and(|active| active != 0)
     }
 
     /// The player's SpEffectCtrl, the first argument of `ApplySpEffect` for effects on the player.

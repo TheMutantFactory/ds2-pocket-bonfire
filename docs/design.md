@@ -30,8 +30,8 @@ the same area and then moves you to the saved position.
 
 | Piece | Where it lives | How |
 |---|---|---|
-| The item | loose params: `ItemParam`, `ItemUsageParam`, `SpEffectParam` | A new reusable key item whose use applies a custom SpEffect. On its own the item does nothing; the DLL watches for that SpEffect. |
-| Item name, description, icon | FMG + icon via Mod Engine `mod\menu\…` | Mod Engine overrides are known to work for DS2 menu text (Nexus 1633 ships FMGs this way). The exact file names need a UXM-unpacked copy to confirm. |
+| The item | loose `ItemParam` | Row 60355010, cloned from Aged Feather, with its Effect ID set to its own row ID. DS2 has no SpEffect param to define effects in, but using an item still applies its Effect ID through `ApplySpEffect` after the animation, even when no such effect exists. It does nothing by itself, and the DLL hooks `ApplySpEffect` and watches for that ID on the player. State `0x0d` makes it reusable. |
+| Item name, description | `itemname`, `simpleexplanation` and `detailedexplanation.fmg` via Mod Engine `mod\menu\text\english\` | Text is keyed by item ID. Nexus 1633 ships FMGs this way. It borrows the feather's icon for now. |
 | Place | DLL | When the SpEffect turns up on the player and the location is allowed: read the area and position, choose the host bonfire, save it. |
 | Rest | DLL | Using the item **while standing at your own pocket bonfire** rests there instead of moving it. Same item, two meanings. Resting opens the real bonfire menu for the host ID (Bob's table calls `+17DC40` with a bonfire id). |
 | Travel to it | params + DLL | A new `MapObjectBonfireParam` row, "Pocket Bonfire", shown in the Travel list (Firelink Edition, Nexus 1509, proves new rows can appear). A hook on `SetWarpTarget` catches that ID and swaps in the host ID, and after the load the DLL writes the saved position. |
@@ -82,10 +82,16 @@ Tested in play (probe 0.5, one session):
 - **The current map is at `*(BaseA+0x30)+0x360`, mirrored at `*(BaseA+0x78)+0x580`.** Both matched the target map after 6 of 6 warps, flipped to m10_10 as the player walked from Majula into Forest of the Fallen Giants, and read m10_17 after the earlier walk there from m10_23.
 - **Rejected candidates:** `EventManager+0x2a4` (my leading guess) and `*(BaseA+0xb0)+0x6a8` aren't map IDs at all. `*(EventManager+0x30)+0xc0` holds pointers much of the time. `*(EventManager+0x20)+0x2d8` and `*(BaseA+0x40)+0x2f4` read `0xffffffff` during loads. `*(BaseA+0xa8)+0x1b8` lags an arrival by about 100 ms.
 
+Tested in play (probe 0.6, one session):
+- **Item use shows up in `ApplySpEffect`.** Using a test item applied `150000000` (the use starting, presumably), then about 2.75 s later the item's own Effect ID. Each test item did this, and the game returned 0 with no other effect. The feather's usage (2210) didn't warp, so the warp isn't tied to the usage.
+- **State `0x0d` means not consumed.** One copy of `60355010` was used twice.
+- **The game's own rest applies `110000010`,** which tells a real rest from the mod's.
+- F3 toggled a first-person view: `dxgi.dll` (DS2 Lighting Engine) contains "free camera", so it's almost certainly that, not the mod. The F6 parry may be Lighting Engine too (not confirmed).
+
 Still unproven:
 - Whether the map fields are right after a kind 4 transition. Only walks and bonfire warps were seen.
 - Whether the warp works with an unlit host. If you've lit no bonfire in the map you're standing in, the only hosts are unlit ones.
-- Dying after we've set LastBonfire ourselves. The write held through the load (0.4), but no death followed it. DS2S-META's setter for the area field writes to the wrong address, so it's no evidence.
+- Dying after we've set LastBonfire ourselves. The last probe test ran with LastBonfire already on the host, so the write changed nothing. The write held through the load (0.4), but no death followed it. DS2S-META's setter for the area field writes to the wrong address, so it's no evidence.
 
 Risks, highest first:
 1. The Travel list may reject a row that has no MSB bonfire behind it. Fallback: a "Pocket Bonfire" entry in the bonfire menu instead, the way Bonfire Level Up swaps out an entry.

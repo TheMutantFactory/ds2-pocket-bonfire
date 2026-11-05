@@ -51,6 +51,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
+name = "pocket-bonfire"
+version = "0.6.0"
+dependencies = [
+ "ds2",
+ "minhook",
+]
+
+[[package]]
 name = "probe"
 version = "0.6.0"
 dependencies = [

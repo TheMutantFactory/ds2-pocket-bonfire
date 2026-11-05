@@ -9,10 +9,10 @@
 
 #![cfg(all(windows, target_pointer_width = "64"))]
 
-mod log;
 mod test_keys;
 
 use ds2::game::{self, Addresses, Snapshot};
+use ds2::log;
 use ds2::mem;
 use minhook::MinHook;
 use std::ffi::c_void;

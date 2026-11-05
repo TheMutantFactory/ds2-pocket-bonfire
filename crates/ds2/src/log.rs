@@ -8,12 +8,12 @@ use std::time::Instant;
 static LOG: OnceLock<(Mutex<File>, Instant)> = OnceLock::new();
 
 pub fn init(addr_in_dll: usize, file_name: &str) {
-    let dir = ds2::module::module_path_of(addr_in_dll)
+    let dir = crate::module::module_path_of(addr_in_dll)
         .and_then(|p| p.parent().map(|d| d.to_path_buf()))
         .unwrap_or_else(|| ".".into());
     if let Ok(f) = OpenOptions::new().create(true).append(true).open(dir.join(file_name)) {
         let _ = LOG.set((Mutex::new(f), Instant::now()));
-        line(format!("---- {} {} loaded", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION")));
+        line(format!("---- {file_name} (ds2 {}) opened", env!("CARGO_PKG_VERSION")));
     }
 }
 

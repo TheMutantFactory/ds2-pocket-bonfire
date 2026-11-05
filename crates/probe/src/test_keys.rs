@@ -17,7 +17,8 @@
 //! Ctrl+F6's delay is there to separate the key from the write: the player starts parrying after
 //! it, and the position samples logged before the write show which of the two sets that off.
 
-use crate::{dump, dump_regions, fmt_snapshot, key_is_down, log, GAME_WARP_MANAGER, OUR_WARP, WARP_SEEN};
+use crate::{dump, dump_regions, fmt_snapshot, key_is_down, GAME_WARP_MANAGER, OUR_WARP, WARP_SEEN};
+use ds2::log;
 use ds2::game::{Addresses, Snapshot, GAME_STATE_PLAYABLE, SP_EFFECT_BONFIRE_REST};
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
