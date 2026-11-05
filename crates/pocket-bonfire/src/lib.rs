@@ -32,11 +32,14 @@ static ADDRS: OnceLock<Addresses> = OnceLock::new();
 static ORIG_APPLY_SP_EFFECT: AtomicUsize = AtomicUsize::new(0);
 static ORIG_WARP_FUNC: AtomicUsize = AtomicUsize::new(0);
 static ORIG_FMG_LOOKUP: AtomicUsize = AtomicUsize::new(0);
+static ORIG_TITLE_INIT_BRANCH: AtomicUsize = AtomicUsize::new(0);
+static ORIG_TITLE_NETWORK_CHECK: AtomicUsize = AtomicUsize::new(0);
 
 /// The hooks only raise these; the game's threads never run the mod's logic.
 static ITEM_USED: AtomicBool = AtomicBool::new(false);
 static WARP_SEEN: AtomicBool = AtomicBool::new(false);
 static TEXT_SERVED: AtomicBool = AtomicBool::new(false);
+static NETWORK_BLOCKED: AtomicBool = AtomicBool::new(false);
 
 /// The item's strings as the game wants them, NUL-terminated UTF-16 that lives as long as the process.
 static ITEM_TEXT: OnceLock<[Vec<u16>; 3]> = OnceLock::new();
@@ -64,15 +67,33 @@ fn beep(accepted: bool) {
 #[no_mangle]
 pub extern "system" fn DllMain(_module: *mut c_void, reason: u32, _reserved: *mut c_void) -> i32 {
     if reason == DLL_PROCESS_ATTACH {
-        // No real work under the loader lock; the thread starts once DllMain returns.
+        // This one hook can't wait for the thread: the game may start networking as soon as it runs.
+        // Everything else stays out of the loader lock, and starts once DllMain returns.
+        let blocked = unsafe { block_network() };
+        NETWORK_BLOCKED.store(blocked, Ordering::SeqCst);
         std::thread::spawn(run);
     }
     1
 }
 
+/// Keeps the game offline by making Windows sockets refuse to start, as Mod Engine does, so nothing
+/// modded can reach the servers even if this mod's other changes don't apply.
+unsafe fn block_network() -> bool {
+    MinHook::create_hook_api("ws2_32", "WSAStartup", wsa_startup_detour as *mut c_void)
+        .and_then(|_| MinHook::enable_all_hooks())
+        .is_ok()
+}
+
+const WSASYSNOTREADY: i32 = 10091;
+
+unsafe extern "system" fn wsa_startup_detour(_version: u16, _data: *mut c_void) -> i32 {
+    WSASYSNOTREADY
+}
+
 fn run() {
     let dll = DllMain as *const () as usize;
     log::init(dll, "pocket_bonfire.log");
+    log::line(format!("network blocked: {}", NETWORK_BLOCKED.load(Ordering::SeqCst)));
     let addrs = match game::resolve() {
         Ok(a) => a,
         Err(e) => {
@@ -87,12 +108,17 @@ fn run() {
         install(addrs.apply_sp_effect, apply_sp_effect_detour as *mut c_void, &ORIG_APPLY_SP_EFFECT)
             .and_then(|_| install(addrs.warp_func, warp_func_detour as *mut c_void, &ORIG_WARP_FUNC))
             .and_then(|_| install(addrs.fmg_lookup, fmg_lookup_detour as *mut c_void, &ORIG_FMG_LOOKUP))
+            .and_then(|_| install(addrs.title_init_branch, title_init_branch_detour as *mut c_void, &ORIG_TITLE_INIT_BRANCH))
+            .and_then(|_| install(addrs.title_network_check, title_network_check_detour as *mut c_void, &ORIG_TITLE_NETWORK_CHECK))
             .and_then(|_| MinHook::enable_all_hooks().map_err(|e| format!("enable: {e:?}")))
     };
     if let Err(e) = hooked {
         log::line(format!("disabled, hooks failed: {e}"));
         return;
     }
+    // Straight to the title menu from the check, past the "not connected" and "offline mode" dialogs.
+    let direct = ds2::mem::write(addrs.title_not_connected_target, game::TITLE_STATE_TOP_MENU);
+    log::line(format!("title shortcut: {direct}"));
     log::line("ready".into());
 
     let dir = ds2::module::module_path_of(dll)
@@ -142,6 +168,23 @@ unsafe extern "system" fn warp_func_detour(manager: *mut u8, warp: *mut u8) -> u
     let orig: WarpFuncFn = std::mem::transmute(ORIG_WARP_FUNC.load(Ordering::SeqCst));
     WARP_SEEN.store(true, Ordering::SeqCst);
     orig(manager, warp)
+}
+
+type TitleStateFn = unsafe extern "system" fn(usize);
+
+/// Skips the warning and logos, by saying they've been shown before the game asks.
+unsafe extern "system" fn title_init_branch_detour(state: usize) {
+    if let Some(addrs) = ADDRS.get() {
+        ds2::mem::write::<u8>(addrs.opening_shown, 1);
+    }
+    let orig: TitleStateFn = std::mem::transmute(ORIG_TITLE_INIT_BRANCH.load(Ordering::SeqCst));
+    orig(state);
+}
+
+/// Answers the network check with "not connected", so the game never tries to log in. The original
+/// isn't called, since choosing the route is all it does.
+unsafe extern "system" fn title_network_check_detour(state: usize) {
+    ds2::mem::write(state + game::OFF_NETWORK_CHECK_RESULT, game::NETWORK_CHECK_NOT_CONNECTED);
 }
 
 type FmgLookupFn = unsafe extern "system" fn(usize, u32) -> *const u16;

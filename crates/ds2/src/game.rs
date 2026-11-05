@@ -38,8 +38,26 @@ pub const AOB_FMG_LOOKUP: &str = "48 89 5C 24 08 48 89 7C 24 10 33 DB 44 8B DA 4
 /// category and id: its text file for category `c` is at `+0x1d8 + c * 0x20`.
 pub const AOB_TEXT_MANAGER: &str = "48 8B 35 ? ? ? ? 8B EA 4C 63 F1 48 85 F6";
 
+/// The title flow's first state, `FeSubStateTitleInitBranch`: a byte saying the opening has been shown
+/// sends it to the title (state 0x17) instead of the warning and logos, as when returning from a game.
+pub const AOB_TITLE_INIT_BRANCH: &str = "33 C0 38 05 ? ? ? ? C6 05 ? ? ? ? 01 0F 95 C0 89 41 10";
+/// `FeSubStateTitleSteamNetworkCheck`'s enter function, which picks the next state through `+0x10`: 1
+/// is the online login, 2 is "not connected to Steam", 3 is a frame rate failure.
+pub const AOB_TITLE_NETWORK_CHECK: &str = "48 89 5C 24 08 57 48 83 EC 20 48 8B 05 ? ? ? ? 48 8B D9 48 8B B8 F0 22 00 00";
+/// Where that check's result 2 gets its target state, as `mov dword [rax+8], 0x24`.
+pub const AOB_TITLE_NOT_CONNECTED_TARGET: &str = "C7 40 08 24 00 00 00 C6 40 0C 01 C7 40 10 FF FF FF FF 48 89 28 C7 40 20 02 00 00 00";
+
+/// The check's result meaning "not connected to Steam", the game's own route to playing offline.
+pub const NETWORK_CHECK_NOT_CONNECTED: u32 = 2;
+pub const OFF_NETWORK_CHECK_RESULT: usize = 0x10;
+/// The title menu. The game's offline route goes through two dialogs and then here.
+pub const TITLE_STATE_TOP_MENU: u32 = 0x47;
+
 /// Every signature the mod depends on, for `resolve` and the offline scanner.
-pub const SIGNATURES: [(&str, &str); 8] = [
+pub const SIGNATURES: [(&str, &str); 11] = [
+    ("TitleInitBranch", AOB_TITLE_INIT_BRANCH),
+    ("TitleNetworkCheck", AOB_TITLE_NETWORK_CHECK),
+    ("TitleNotConnectedTarget", AOB_TITLE_NOT_CONNECTED_TARGET),
     ("FmgLookup", AOB_FMG_LOOKUP),
     ("TextManager", AOB_TEXT_MANAGER),
     ("BaseA", AOB_BASE_A),
@@ -123,6 +141,11 @@ pub struct Addresses {
     pub fmg_lookup: usize,
     /// Address of the text manager global (dereference it to get the manager).
     pub text_manager_global: usize,
+    pub title_init_branch: usize,
+    /// The byte saying the opening has been shown.
+    pub opening_shown: usize,
+    pub title_network_check: usize,
+    pub title_not_connected_target: usize,
 }
 
 /// Which of the item's three strings a text file holds.
@@ -162,6 +185,7 @@ pub fn resolve() -> Result<Addresses, ResolveError> {
         Pattern::parse(aob).find_unique(&module).map_err(|hits| ResolveError::Pattern { name, hits })
     };
     let base_hit = find("BaseA", AOB_BASE_A)?;
+    let title_init_branch = find("TitleInitBranch", AOB_TITLE_INIT_BRANCH)?;
     Ok(Addresses {
         module,
         base_a_global: rip_relative(base_hit, 3, 7).ok_or(ResolveError::Pattern { name: "BaseA", hits: 0 })?,
@@ -173,6 +197,11 @@ pub fn resolve() -> Result<Addresses, ResolveError> {
         fmg_lookup: find("FmgLookup", AOB_FMG_LOOKUP)?,
         text_manager_global: rip_relative(find("TextManager", AOB_TEXT_MANAGER)?, 3, 7)
             .ok_or(ResolveError::Pattern { name: "TextManager", hits: 0 })?,
+        title_init_branch,
+        opening_shown: rip_relative(title_init_branch, 4, 8)
+            .ok_or(ResolveError::Pattern { name: "TitleInitBranch", hits: 0 })?,
+        title_network_check: find("TitleNetworkCheck", AOB_TITLE_NETWORK_CHECK)?,
+        title_not_connected_target: find("TitleNotConnectedTarget", AOB_TITLE_NOT_CONNECTED_TARGET)? + 3,
     })
 }
 
