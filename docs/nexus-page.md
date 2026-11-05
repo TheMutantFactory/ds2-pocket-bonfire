@@ -28,7 +28,7 @@ A reusable feather that makes the spot you're standing on your respawn point and
 [list]
 [*][b]Place:[/b] use the feather and that spot becomes your pocket bonfire. A high beep confirms it. Any earlier one is gone, so you only ever have one.
 [*][b]Respawn:[/b] when you die, you come back at that spot.
-[*][b]Rest:[/b] use the feather within a few steps of the spot. The real bonfire menu opens, including Travel, and enemies respawn as they do at any bonfire.
+[*][b]Rest:[/b] use the feather within a few steps of the spot. The real bonfire menu opens, including Travel, and enemies respawn as they do at any bonfire. It shows the name of the real bonfire you last rested at. The Level up entry in the screenshot comes from the Bonfire Level Up mod.
 [/list]
 Every character gets one feather the first time you load it after installing. Put it in an item slot to use it.
 

@@ -3,11 +3,16 @@
 A mod for Dark Souls II: Scholar of the First Sin that cuts down boss runs. It adds a reusable feather
 that makes the spot you're standing on your respawn point and a place to rest.
 
+![The Pocket Bonfire in the inventory](docs/images/inventory.webp)
+
+![Resting at a pocket bonfire](docs/images/rest-menu.webp)
+
 - **Place:** use the feather and that spot becomes your pocket bonfire. A high beep confirms it. Any
   earlier one is gone, so you only ever have one.
 - **Respawn:** when you die, you come back at that spot.
 - **Rest:** use the feather within a few steps of the spot. The real bonfire menu opens, including
-  Travel, and enemies respawn as they do at any bonfire.
+  Travel, and enemies respawn as they do at any bonfire. It shows the name of the real bonfire you
+  last rested at. The Level up entry in the screenshot comes from the Bonfire Level Up mod.
 
 Every character gets one feather in its inventory the first time you load it after installing. Put it
 in an item slot to use it.
