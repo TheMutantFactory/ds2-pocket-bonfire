@@ -75,4 +75,7 @@ For bug reports, attach Game\dllMods\pocket_bonfire.log.
 [/list]
 
 Source and license (MIT): [url=https://github.com/TheMutantFactory/ds2-pocket-bonfire]GitHub[/url]
+
+Don't go hollow, I love you.
+[url=https://mutantfactory.net/feedback]https://mutantfactory.net/feedback[/url]
 ```

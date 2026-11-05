@@ -12,7 +12,7 @@ pub const NAME: &str = "Pocket Bonfire";
 pub const SIMPLE: &str = "Places your own bonfire where you stand. Use it there to rest.";
 /// The detail panel doesn't wrap, so the line breaks are part of the text: 57 characters were cut off
 /// in play, and 49 fit.
-pub const DETAILED: &str = "A flame that refuses to stay where it was lit.\n\nUse it to place a bonfire at your feet. Any bonfire\nplaced before goes out. Use it again beside that\nbonfire to rest, as you would at any other.\n\nRequires having rested at a bonfire in this land.";
+pub const DETAILED: &str = "A flame that refuses to stay where it was lit.\n\nUse it to place a bonfire at your feet. Any bonfire\nplaced before goes out. Use it again beside that\nbonfire to rest, as you would at any other.\n\nRequires having rested at a bonfire in this land.\n\nDon't go hollow, I love you.\nhttps://mutantfactory.net/feedback";
 
 /// Returns ItemParam with the item's row added, or `None` if it's already there. Using the item applies
 /// its Effect ID, which is the row's own id, and that's what the DLL watches for.

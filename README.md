@@ -98,3 +98,9 @@ what each test found.
 
 MIT. See [LICENSE](LICENSE). Release zips include `THIRD-PARTY-NOTICES.txt` for the libraries linked into
 the mod, and for Lazy Loader.
+
+---
+
+Don't go hollow, I love you.
+
+https://mutantfactory.net/feedback
