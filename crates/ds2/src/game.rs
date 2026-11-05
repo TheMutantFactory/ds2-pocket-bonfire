@@ -31,8 +31,35 @@ pub const AOB_REST_AT_BONFIRE: &str = "40 53 48 83 EC 20 83 79 38 00 48 8B D9 75
 /// `ItemGive(item_bag*, item_structs*, u32 count, 0)`, adding items with no on-screen window.
 pub const AOB_ITEM_GIVE: &str = "48 89 5C 24 18 56 57 41 56 48 83 EC 30 45 8B F1 41";
 
+/// `FmgLookup(fmg*, u32 id) -> *const u16`: finds a string in a loaded text file, null if it has none.
+/// Every piece of item text the menus show goes through it.
+pub const AOB_FMG_LOOKUP: &str = "48 89 5C 24 08 48 89 7C 24 10 33 DB 44 8B DA 48 8B F9 48 85 C9 75 0D 33 C0 48 8B";
+/// `mov rsi, [rip+disp32]` loading the text manager global, in the function that fetches a string by
+/// category and id: its text file for category `c` is at `+0x1d8 + c * 0x20`.
+pub const AOB_TEXT_MANAGER: &str = "48 8B 35 ? ? ? ? 8B EA 4C 63 F1 48 85 F6";
+
+/// The title flow's first state, `FeSubStateTitleInitBranch`: a byte saying the opening has been shown
+/// sends it to the title (state 0x17) instead of the warning and logos, as when returning from a game.
+pub const AOB_TITLE_INIT_BRANCH: &str = "33 C0 38 05 ? ? ? ? C6 05 ? ? ? ? 01 0F 95 C0 89 41 10";
+/// `FeSubStateTitleSteamNetworkCheck`'s enter function, which picks the next state through `+0x10`: 1
+/// is the online login, 2 is "not connected to Steam", 3 is a frame rate failure.
+pub const AOB_TITLE_NETWORK_CHECK: &str = "48 89 5C 24 08 57 48 83 EC 20 48 8B 05 ? ? ? ? 48 8B D9 48 8B B8 F0 22 00 00";
+/// Where that check's result 2 gets its target state, as `mov dword [rax+8], 0x24`.
+pub const AOB_TITLE_NOT_CONNECTED_TARGET: &str = "C7 40 08 24 00 00 00 C6 40 0C 01 C7 40 10 FF FF FF FF 48 89 28 C7 40 20 02 00 00 00";
+
+/// The check's result meaning "not connected to Steam", the game's own route to playing offline.
+pub const NETWORK_CHECK_NOT_CONNECTED: u32 = 2;
+pub const OFF_NETWORK_CHECK_RESULT: usize = 0x10;
+/// The title menu. The game's offline route goes through two dialogs and then here.
+pub const TITLE_STATE_TOP_MENU: u32 = 0x47;
+
 /// Every signature the mod depends on, for `resolve` and the offline scanner.
-pub const SIGNATURES: [(&str, &str); 6] = [
+pub const SIGNATURES: [(&str, &str); 11] = [
+    ("TitleInitBranch", AOB_TITLE_INIT_BRANCH),
+    ("TitleNetworkCheck", AOB_TITLE_NETWORK_CHECK),
+    ("TitleNotConnectedTarget", AOB_TITLE_NOT_CONNECTED_TARGET),
+    ("FmgLookup", AOB_FMG_LOOKUP),
+    ("TextManager", AOB_TEXT_MANAGER),
     ("BaseA", AOB_BASE_A),
     ("SetWarpTarget", AOB_SET_WARP_TARGET),
     ("WarpFunc", AOB_WARP_FUNC),
@@ -88,6 +115,17 @@ pub const OFF_LAST_BONFIRE: usize = 0x16c;
 /// BaseA -> 0x80 -> 0x8, + 0xbb4.
 pub const CHAIN_LOADING: [usize; 2] = [0x80, 0x8];
 pub const OFF_LOADING: usize = 0xbb4;
+/// BaseA child holding the ItemParam resource (DS2S-META `ParamOffsets.txt`: A8;20;D8), and within
+/// it, the pointer to the param, laid out the same as the file.
+pub const CHAIN_ITEM_PARAM_RES: [usize; 2] = [0xa8, 0x20];
+pub const OFF_PARAM_DATA: usize = 0xd8;
+/// Byte saying the resource owns that data and must free it. A pointer from elsewhere trips an
+/// assertion in the game's allocator when the game closes (`+0xaf6950` skips the free if this is 0).
+pub const OFF_PARAM_DATA_OWNED: usize = 0xe8;
+/// Within the text manager: ItemName, SimpleExplanation and DetailedExplanation, categories 8 to 10.
+pub const OFF_TEXT_ITEM_NAME: usize = 0x2d8;
+pub const OFF_TEXT_SIMPLE: usize = 0x2f8;
+pub const OFF_TEXT_DETAILED: usize = 0x318;
 pub const OFF_GAME_STATE: usize = 0x24ac;
 
 #[derive(Debug, Clone, Copy)]
@@ -100,6 +138,22 @@ pub struct Addresses {
     pub apply_sp_effect: usize,
     pub rest_at_bonfire: usize,
     pub item_give: usize,
+    pub fmg_lookup: usize,
+    /// Address of the text manager global (dereference it to get the manager).
+    pub text_manager_global: usize,
+    pub title_init_branch: usize,
+    /// The byte saying the opening has been shown.
+    pub opening_shown: usize,
+    pub title_network_check: usize,
+    pub title_not_connected_target: usize,
+}
+
+/// Which of the item's three strings a text file holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ItemText {
+    Name,
+    Simple,
+    Detailed,
 }
 
 #[derive(Debug)]
@@ -131,6 +185,7 @@ pub fn resolve() -> Result<Addresses, ResolveError> {
         Pattern::parse(aob).find_unique(&module).map_err(|hits| ResolveError::Pattern { name, hits })
     };
     let base_hit = find("BaseA", AOB_BASE_A)?;
+    let title_init_branch = find("TitleInitBranch", AOB_TITLE_INIT_BRANCH)?;
     Ok(Addresses {
         module,
         base_a_global: rip_relative(base_hit, 3, 7).ok_or(ResolveError::Pattern { name: "BaseA", hits: 0 })?,
@@ -139,6 +194,14 @@ pub fn resolve() -> Result<Addresses, ResolveError> {
         apply_sp_effect: find("ApplySpEffect", AOB_APPLY_SP_EFFECT)?,
         rest_at_bonfire: find("RestAtBonfire", AOB_REST_AT_BONFIRE)?,
         item_give: find("ItemGive", AOB_ITEM_GIVE)?,
+        fmg_lookup: find("FmgLookup", AOB_FMG_LOOKUP)?,
+        text_manager_global: rip_relative(find("TextManager", AOB_TEXT_MANAGER)?, 3, 7)
+            .ok_or(ResolveError::Pattern { name: "TextManager", hits: 0 })?,
+        title_init_branch,
+        opening_shown: rip_relative(title_init_branch, 4, 8)
+            .ok_or(ResolveError::Pattern { name: "TitleInitBranch", hits: 0 })?,
+        title_network_check: find("TitleNetworkCheck", AOB_TITLE_NETWORK_CHECK)?,
+        title_not_connected_target: find("TitleNotConnectedTarget", AOB_TITLE_NOT_CONNECTED_TARGET)? + 3,
     })
 }
 
@@ -156,6 +219,31 @@ pub struct Snapshot {
 impl Addresses {
     pub fn base_a(&self) -> Option<usize> {
         mem::ptr(self.base_a_global)
+    }
+
+    /// The resource holding ItemParam, once the game has loaded it.
+    fn item_param_res(&self) -> Option<usize> {
+        self.base_a().and_then(|b| mem::chain(b, &CHAIN_ITEM_PARAM_RES))
+    }
+
+    /// The ItemParam the game is using right now.
+    pub fn item_param(&self) -> Option<usize> {
+        mem::ptr(self.item_param_res()? + OFF_PARAM_DATA)
+    }
+
+    /// Points the game at `data` as its ItemParam. The game won't try to free it, or the old copy.
+    pub fn set_item_param(&self, data: usize) -> bool {
+        let Some(res) = self.item_param_res() else { return false };
+        mem::write::<u8>(res + OFF_PARAM_DATA_OWNED, 0) && mem::write(res + OFF_PARAM_DATA, data)
+    }
+
+    /// Which item string a loaded text file is for, if any.
+    pub fn item_text_kind(&self, fmg: usize) -> Option<ItemText> {
+        let manager = mem::ptr(self.text_manager_global)?;
+        [(OFF_TEXT_ITEM_NAME, ItemText::Name), (OFF_TEXT_SIMPLE, ItemText::Simple), (OFF_TEXT_DETAILED, ItemText::Detailed)]
+            .into_iter()
+            .find(|&(off, _)| mem::ptr(manager + off) == Some(fmg))
+            .map(|(_, kind)| kind)
     }
     pub fn player_ctrl(&self) -> Option<usize> {
         mem::ptr(self.base_a()? + OFF_PLAYER_CTRL)
