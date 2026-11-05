@@ -184,6 +184,7 @@ enum ItemRow {
 struct Mod {
     store: Store,
     item_row: ItemRow,
+    text_logged: bool,
     character: Option<Vec<u16>>,
     bonfire: Option<Bonfire>,
     /// A respawn is loading; move the player when it finishes.
@@ -199,6 +200,7 @@ impl Mod {
         Mod {
             store,
             item_row: ItemRow::Unknown,
+            text_logged: false,
             character: None,
             bonfire: None,
             arriving: None,
@@ -222,7 +224,8 @@ impl Mod {
         let was_playable = last.game_state == Some(GAME_STATE_PLAYABLE);
 
         self.keep_item_row(addrs);
-        if TEXT_SERVED.swap(false, Ordering::SeqCst) {
+        if !self.text_logged && TEXT_SERVED.load(Ordering::SeqCst) {
+            self.text_logged = true;
             log::line("item text served".into());
         }
         if playable {
@@ -248,8 +251,7 @@ impl Mod {
     /// Points the game at a copy of ItemParam with the item's row added, whenever the param it's using
     /// doesn't have one. The old copy stays in place, since other code may still be reading it.
     fn keep_item_row(&mut self, addrs: &Addresses) {
-        let Some(slot) = addrs.item_param_slot() else { return };
-        let Some(current) = ds2::mem::ptr(slot) else { return };
+        let Some(current) = addrs.item_param() else { return };
         if matches!(self.item_row, ItemRow::In(p) | ItemRow::Failed(p) if p == current) {
             return;
         }
@@ -257,7 +259,7 @@ impl Mod {
             Some(Ok(Some(with_row))) => {
                 let copy: &'static mut [u8] = Vec::leak(with_row);
                 let new = copy.as_ptr() as usize;
-                if ds2::mem::write(slot, new) {
+                if addrs.set_item_param(new) {
                     log::line(format!("item row added: ItemParam {current:#x} -> {new:#x}, {} bytes", copy.len()));
                     ItemRow::In(new)
                 } else {

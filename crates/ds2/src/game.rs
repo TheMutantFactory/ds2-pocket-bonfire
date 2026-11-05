@@ -101,6 +101,9 @@ pub const OFF_LOADING: usize = 0xbb4;
 /// it, the pointer to the param, laid out the same as the file.
 pub const CHAIN_ITEM_PARAM_RES: [usize; 2] = [0xa8, 0x20];
 pub const OFF_PARAM_DATA: usize = 0xd8;
+/// Byte saying the resource owns that data and must free it. A pointer from elsewhere trips an
+/// assertion in the game's allocator when the game closes (`+0xaf6950` skips the free if this is 0).
+pub const OFF_PARAM_DATA_OWNED: usize = 0xe8;
 /// Within the text manager: ItemName, SimpleExplanation and DetailedExplanation, categories 8 to 10.
 pub const OFF_TEXT_ITEM_NAME: usize = 0x2d8;
 pub const OFF_TEXT_SIMPLE: usize = 0x2f8;
@@ -189,9 +192,20 @@ impl Addresses {
         mem::ptr(self.base_a_global)
     }
 
-    /// Where the game keeps its pointer to ItemParam, once it has loaded it.
-    pub fn item_param_slot(&self) -> Option<usize> {
-        self.base_a().and_then(|b| mem::chain(b, &CHAIN_ITEM_PARAM_RES)).map(|res| res + OFF_PARAM_DATA)
+    /// The resource holding ItemParam, once the game has loaded it.
+    fn item_param_res(&self) -> Option<usize> {
+        self.base_a().and_then(|b| mem::chain(b, &CHAIN_ITEM_PARAM_RES))
+    }
+
+    /// The ItemParam the game is using right now.
+    pub fn item_param(&self) -> Option<usize> {
+        mem::ptr(self.item_param_res()? + OFF_PARAM_DATA)
+    }
+
+    /// Points the game at `data` as its ItemParam. The game won't try to free it, or the old copy.
+    pub fn set_item_param(&self, data: usize) -> bool {
+        let Some(res) = self.item_param_res() else { return false };
+        mem::write::<u8>(res + OFF_PARAM_DATA_OWNED, 0) && mem::write(res + OFF_PARAM_DATA, data)
     }
 
     /// Which item string a loaded text file is for, if any.
