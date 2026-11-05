@@ -11,8 +11,8 @@
 
 mod state;
 
-use ds2::game::{self, Addresses, Snapshot, GAME_STATE_PLAYABLE, POCKET_BONFIRE_ITEM};
-use ds2::log;
+use ds2::game::{self, Addresses, ItemText, Snapshot, GAME_STATE_PLAYABLE, POCKET_BONFIRE_ITEM};
+use ds2::{item, log};
 use minhook::MinHook;
 use state::{Bonfire, Store};
 use std::ffi::c_void;
@@ -31,10 +31,19 @@ const ARRIVE_TIMEOUT: Duration = Duration::from_secs(180);
 static ADDRS: OnceLock<Addresses> = OnceLock::new();
 static ORIG_APPLY_SP_EFFECT: AtomicUsize = AtomicUsize::new(0);
 static ORIG_WARP_FUNC: AtomicUsize = AtomicUsize::new(0);
+static ORIG_FMG_LOOKUP: AtomicUsize = AtomicUsize::new(0);
 
 /// The hooks only raise these; the game's threads never run the mod's logic.
 static ITEM_USED: AtomicBool = AtomicBool::new(false);
 static WARP_SEEN: AtomicBool = AtomicBool::new(false);
+static TEXT_SERVED: AtomicBool = AtomicBool::new(false);
+
+/// The item's strings as the game wants them, NUL-terminated UTF-16 that lives as long as the process.
+static ITEM_TEXT: OnceLock<[Vec<u16>; 3]> = OnceLock::new();
+
+fn utf16(text: &str) -> Vec<u16> {
+    text.encode_utf16().chain(Some(0)).collect()
+}
 
 #[link(name = "kernel32")]
 extern "system" {
@@ -72,10 +81,12 @@ fn run() {
         }
     };
     let _ = ADDRS.set(addrs);
+    let _ = ITEM_TEXT.set([utf16(item::NAME), utf16(item::SIMPLE), utf16(item::DETAILED)]);
 
     let hooked = unsafe {
         install(addrs.apply_sp_effect, apply_sp_effect_detour as *mut c_void, &ORIG_APPLY_SP_EFFECT)
             .and_then(|_| install(addrs.warp_func, warp_func_detour as *mut c_void, &ORIG_WARP_FUNC))
+            .and_then(|_| install(addrs.fmg_lookup, fmg_lookup_detour as *mut c_void, &ORIG_FMG_LOOKUP))
             .and_then(|_| MinHook::enable_all_hooks().map_err(|e| format!("enable: {e:?}")))
     };
     if let Err(e) = hooked {
@@ -88,6 +99,12 @@ fn run() {
         .and_then(|p| p.parent().map(|d| d.join("pocket_bonfire")))
         .unwrap_or_else(|| PathBuf::from("pocket_bonfire"));
     Mod::new(Store::new(dir)).run(&addrs);
+}
+
+/// Reads a whole param from memory. It starts with its own length, as the file does.
+fn read_param(addr: usize) -> Option<Vec<u8>> {
+    let len = ds2::mem::read::<u32>(addr)? as usize;
+    (0x40..=16 << 20).contains(&len).then(|| ds2::mem::read_bytes(addr, len)).flatten()
 }
 
 unsafe fn install(target: usize, detour: *mut c_void, orig: &AtomicUsize) -> Result<(), String> {
@@ -127,8 +144,46 @@ unsafe extern "system" fn warp_func_detour(manager: *mut u8, warp: *mut u8) -> u
     orig(manager, warp)
 }
 
+type FmgLookupFn = unsafe extern "system" fn(usize, u32) -> *const u16;
+
+/// Supplies the item's text in whichever language is loaded, so no text files need changing. Text a
+/// file really has wins, which lets another mod or a translation override it. Called constantly, so
+/// anything but the item's id passes straight through.
+unsafe extern "system" fn fmg_lookup_detour(fmg: usize, id: u32) -> *const u16 {
+    let orig: FmgLookupFn = std::mem::transmute(ORIG_FMG_LOOKUP.load(Ordering::SeqCst));
+    let found = orig(fmg, id);
+    if id != POCKET_BONFIRE_ITEM || !found.is_null() {
+        return found;
+    }
+    let index = match ADDRS.get().and_then(|a| a.item_text_kind(fmg)) {
+        Some(ItemText::Name) => 0,
+        Some(ItemText::Simple) => 1,
+        Some(ItemText::Detailed) => 2,
+        None => return found,
+    };
+    match ITEM_TEXT.get() {
+        Some(text) => {
+            TEXT_SERVED.store(true, Ordering::SeqCst);
+            text[index].as_ptr()
+        }
+        None => found,
+    }
+}
+
+/// Where the item row stands in the param the game is using right now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ItemRow {
+    /// Nothing checked yet, or the game hasn't loaded ItemParam.
+    Unknown,
+    /// This param has the row, so the item is safe to give.
+    In(usize),
+    /// This param can't take the row. Giving the item could crash the game, so it isn't given.
+    Failed(usize),
+}
+
 struct Mod {
     store: Store,
+    item_row: ItemRow,
     character: Option<Vec<u16>>,
     bonfire: Option<Bonfire>,
     /// A respawn is loading; move the player when it finishes.
@@ -141,7 +196,15 @@ struct Mod {
 
 impl Mod {
     fn new(store: Store) -> Mod {
-        Mod { store, character: None, bonfire: None, arriving: None, our_rest_open: false, item_settled: false }
+        Mod {
+            store,
+            item_row: ItemRow::Unknown,
+            character: None,
+            bonfire: None,
+            arriving: None,
+            our_rest_open: false,
+            item_settled: false,
+        }
     }
 
     fn run(mut self, addrs: &Addresses) {
@@ -158,6 +221,10 @@ impl Mod {
         let playable = now.game_state == Some(GAME_STATE_PLAYABLE);
         let was_playable = last.game_state == Some(GAME_STATE_PLAYABLE);
 
+        self.keep_item_row(addrs);
+        if TEXT_SERVED.swap(false, Ordering::SeqCst) {
+            log::line("item text served".into());
+        }
         if playable {
             self.load_character(addrs);
             self.grant_item(addrs);
@@ -178,6 +245,41 @@ impl Mod {
         self.finish_arrival(addrs, now);
     }
 
+    /// Points the game at a copy of ItemParam with the item's row added, whenever the param it's using
+    /// doesn't have one. The old copy stays in place, since other code may still be reading it.
+    fn keep_item_row(&mut self, addrs: &Addresses) {
+        let Some(slot) = addrs.item_param_slot() else { return };
+        let Some(current) = ds2::mem::ptr(slot) else { return };
+        if matches!(self.item_row, ItemRow::In(p) | ItemRow::Failed(p) if p == current) {
+            return;
+        }
+        self.item_row = match read_param(current).map(|bytes| item::add_row(&bytes)) {
+            Some(Ok(Some(with_row))) => {
+                let copy: &'static mut [u8] = Vec::leak(with_row);
+                let new = copy.as_ptr() as usize;
+                if ds2::mem::write(slot, new) {
+                    log::line(format!("item row added: ItemParam {current:#x} -> {new:#x}, {} bytes", copy.len()));
+                    ItemRow::In(new)
+                } else {
+                    log::line("couldn't update ItemParam's pointer".into());
+                    ItemRow::Failed(current)
+                }
+            }
+            Some(Ok(None)) => {
+                log::line("ItemParam already has the item".into());
+                ItemRow::In(current)
+            }
+            Some(Err(e)) => {
+                log::line(format!("couldn't add the item row: {e}"));
+                ItemRow::Failed(current)
+            }
+            None => {
+                log::line(format!("couldn't read ItemParam at {current:#x}"));
+                ItemRow::Failed(current)
+            }
+        };
+    }
+
     /// Saved state is per character. Reading it again each time the player gains control would be
     /// wasteful, so it only happens when the name changes.
     fn load_character(&mut self, addrs: &Addresses) {
@@ -194,7 +296,7 @@ impl Mod {
     /// bonfire has already used one, so it counts as given. If the bag isn't available yet, this
     /// tries again on the next tick.
     fn grant_item(&mut self, addrs: &Addresses) {
-        if self.item_settled || !addrs.playable() {
+        if self.item_settled || !addrs.playable() || !matches!(self.item_row, ItemRow::In(_)) {
             return;
         }
         let Some(name) = &self.character else { return };

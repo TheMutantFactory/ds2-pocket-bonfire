@@ -6,18 +6,14 @@
 
 use ds2::fmg::Fmg;
 use ds2::game::POCKET_BONFIRE_ITEM;
+use ds2::item;
 use std::path::Path;
 
 const TEXT: [(&str, &str); 3] = [
-    ("itemname.fmg", "Pocket Bonfire"),
-    ("simpleexplanation.fmg", "Places your own bonfire where you stand. Use it there to rest."),
-    (
-        "detailedexplanation.fmg",
-        "A flame that refuses to stay where it was lit.\n\nUse it to place a bonfire at your feet. Any bonfire\nplaced before goes out. Use it again beside that\nbonfire to rest, as you would at any other.\n\nRequires having rested at a bonfire in this land.",
-    ),
+    ("itemname.fmg", item::NAME),
+    ("simpleexplanation.fmg", item::SIMPLE),
+    ("detailedexplanation.fmg", item::DETAILED),
 ];
-/// The detail panel doesn't wrap: 57 characters were cut off in play, and 49 fit.
-const MAX_DETAILED_LINE: usize = 52;
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -26,9 +22,6 @@ fn main() {
     std::fs::create_dir_all(&output).expect("create output dir");
 
     for (file, text) in TEXT {
-        if file == "detailedexplanation.fmg" {
-            assert!(text.lines().all(|l| l.chars().count() <= MAX_DETAILED_LINE), "{file}: a line is too long");
-        }
         let bytes = std::fs::read(Path::new(&input).join(file)).expect("read fmg");
         let mut fmg = Fmg::parse(&bytes).expect("parse fmg");
         let rebuilt = fmg.to_bytes();

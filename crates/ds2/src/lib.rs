@@ -8,6 +8,7 @@
 
 pub mod fmg;
 pub mod game;
+pub mod item;
 pub mod log;
 pub mod mem;
 pub mod module;

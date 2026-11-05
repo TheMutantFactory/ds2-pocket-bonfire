@@ -31,8 +31,17 @@ pub const AOB_REST_AT_BONFIRE: &str = "40 53 48 83 EC 20 83 79 38 00 48 8B D9 75
 /// `ItemGive(item_bag*, item_structs*, u32 count, 0)`, adding items with no on-screen window.
 pub const AOB_ITEM_GIVE: &str = "48 89 5C 24 18 56 57 41 56 48 83 EC 30 45 8B F1 41";
 
+/// `FmgLookup(fmg*, u32 id) -> *const u16`: finds a string in a loaded text file, null if it has none.
+/// Every piece of item text the menus show goes through it.
+pub const AOB_FMG_LOOKUP: &str = "48 89 5C 24 08 48 89 7C 24 10 33 DB 44 8B DA 48 8B F9 48 85 C9 75 0D 33 C0 48 8B";
+/// `mov rsi, [rip+disp32]` loading the text manager global, in the function that fetches a string by
+/// category and id: its text file for category `c` is at `+0x1d8 + c * 0x20`.
+pub const AOB_TEXT_MANAGER: &str = "48 8B 35 ? ? ? ? 8B EA 4C 63 F1 48 85 F6";
+
 /// Every signature the mod depends on, for `resolve` and the offline scanner.
-pub const SIGNATURES: [(&str, &str); 6] = [
+pub const SIGNATURES: [(&str, &str); 8] = [
+    ("FmgLookup", AOB_FMG_LOOKUP),
+    ("TextManager", AOB_TEXT_MANAGER),
     ("BaseA", AOB_BASE_A),
     ("SetWarpTarget", AOB_SET_WARP_TARGET),
     ("WarpFunc", AOB_WARP_FUNC),
@@ -88,6 +97,14 @@ pub const OFF_LAST_BONFIRE: usize = 0x16c;
 /// BaseA -> 0x80 -> 0x8, + 0xbb4.
 pub const CHAIN_LOADING: [usize; 2] = [0x80, 0x8];
 pub const OFF_LOADING: usize = 0xbb4;
+/// BaseA child holding the ItemParam resource (DS2S-META `ParamOffsets.txt`: A8;20;D8), and within
+/// it, the pointer to the param, laid out the same as the file.
+pub const CHAIN_ITEM_PARAM_RES: [usize; 2] = [0xa8, 0x20];
+pub const OFF_PARAM_DATA: usize = 0xd8;
+/// Within the text manager: ItemName, SimpleExplanation and DetailedExplanation, categories 8 to 10.
+pub const OFF_TEXT_ITEM_NAME: usize = 0x2d8;
+pub const OFF_TEXT_SIMPLE: usize = 0x2f8;
+pub const OFF_TEXT_DETAILED: usize = 0x318;
 pub const OFF_GAME_STATE: usize = 0x24ac;
 
 #[derive(Debug, Clone, Copy)]
@@ -100,6 +117,17 @@ pub struct Addresses {
     pub apply_sp_effect: usize,
     pub rest_at_bonfire: usize,
     pub item_give: usize,
+    pub fmg_lookup: usize,
+    /// Address of the text manager global (dereference it to get the manager).
+    pub text_manager_global: usize,
+}
+
+/// Which of the item's three strings a text file holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ItemText {
+    Name,
+    Simple,
+    Detailed,
 }
 
 #[derive(Debug)]
@@ -139,6 +167,9 @@ pub fn resolve() -> Result<Addresses, ResolveError> {
         apply_sp_effect: find("ApplySpEffect", AOB_APPLY_SP_EFFECT)?,
         rest_at_bonfire: find("RestAtBonfire", AOB_REST_AT_BONFIRE)?,
         item_give: find("ItemGive", AOB_ITEM_GIVE)?,
+        fmg_lookup: find("FmgLookup", AOB_FMG_LOOKUP)?,
+        text_manager_global: rip_relative(find("TextManager", AOB_TEXT_MANAGER)?, 3, 7)
+            .ok_or(ResolveError::Pattern { name: "TextManager", hits: 0 })?,
     })
 }
 
@@ -156,6 +187,20 @@ pub struct Snapshot {
 impl Addresses {
     pub fn base_a(&self) -> Option<usize> {
         mem::ptr(self.base_a_global)
+    }
+
+    /// Where the game keeps its pointer to ItemParam, once it has loaded it.
+    pub fn item_param_slot(&self) -> Option<usize> {
+        self.base_a().and_then(|b| mem::chain(b, &CHAIN_ITEM_PARAM_RES)).map(|res| res + OFF_PARAM_DATA)
+    }
+
+    /// Which item string a loaded text file is for, if any.
+    pub fn item_text_kind(&self, fmg: usize) -> Option<ItemText> {
+        let manager = mem::ptr(self.text_manager_global)?;
+        [(OFF_TEXT_ITEM_NAME, ItemText::Name), (OFF_TEXT_SIMPLE, ItemText::Simple), (OFF_TEXT_DETAILED, ItemText::Detailed)]
+            .into_iter()
+            .find(|&(off, _)| mem::ptr(manager + off) == Some(fmg))
+            .map(|(_, kind)| kind)
     }
     pub fn player_ctrl(&self) -> Option<usize> {
         mem::ptr(self.base_a()? + OFF_PLAYER_CTRL)
