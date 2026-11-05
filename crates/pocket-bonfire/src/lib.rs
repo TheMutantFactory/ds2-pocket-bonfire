@@ -135,11 +135,13 @@ struct Mod {
     arriving: Option<Instant>,
     /// A rest menu the mod opened is up, so rest effects come from the mod's own rest.
     our_rest_open: bool,
+    /// This character's item has been dealt with, so `grant_item` has nothing left to do.
+    item_settled: bool,
 }
 
 impl Mod {
     fn new(store: Store) -> Mod {
-        Mod { store, character: None, bonfire: None, arriving: None, our_rest_open: false }
+        Mod { store, character: None, bonfire: None, arriving: None, our_rest_open: false, item_settled: false }
     }
 
     fn run(mut self, addrs: &Addresses) {
@@ -158,6 +160,7 @@ impl Mod {
 
         if playable {
             self.load_character(addrs);
+            self.grant_item(addrs);
         }
         self.watch_rests(addrs);
         if ITEM_USED.swap(false, Ordering::SeqCst) {
@@ -183,6 +186,28 @@ impl Mod {
             self.bonfire = self.store.load(&name);
             log::line(format!("character {}: {:?}", String::from_utf16_lossy(&name), self.bonfire));
             self.character = Some(name);
+            self.item_settled = false;
+        }
+    }
+
+    /// Gives each character one item, the first time it's seen in control. A character with a saved
+    /// bonfire has already used one, so it counts as given. If the bag isn't available yet, this
+    /// tries again on the next tick.
+    fn grant_item(&mut self, addrs: &Addresses) {
+        if self.item_settled || !addrs.playable() {
+            return;
+        }
+        let Some(name) = &self.character else { return };
+        if self.store.item_given(name) || self.bonfire.is_some() {
+            self.item_settled = true;
+            return;
+        }
+        if unsafe { addrs.give_item(POCKET_BONFIRE_ITEM, 1) } {
+            self.item_settled = true;
+            log::line(format!("gave the item to {}", String::from_utf16_lossy(name)));
+            if let Err(e) = self.store.mark_item_given(name) {
+                log::line(format!("couldn't record the item, it will be given again next launch: {e}"));
+            }
         }
     }
 

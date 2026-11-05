@@ -65,6 +65,16 @@ impl Store {
         std::fs::create_dir_all(&self.dir)?;
         std::fs::write(self.path(character), bonfire.to_text())
     }
+
+    /// Whether this character has already been given the item.
+    pub fn item_given(&self, character: &[u16]) -> bool {
+        self.path(character).with_extension("item").exists()
+    }
+
+    pub fn mark_item_given(&self, character: &[u16]) -> std::io::Result<()> {
+        std::fs::create_dir_all(&self.dir)?;
+        std::fs::write(self.path(character).with_extension("item"), "")
+    }
 }
 
 #[cfg(test)]
@@ -100,6 +110,22 @@ mod tests {
         store.save(&a, &sample()).unwrap();
         assert_eq!(store.load(&a), Some(sample()));
         assert_eq!(store.load(&b), None);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn item_marker_is_per_character_and_leaves_the_bonfire_alone() {
+        let dir = std::env::temp_dir().join(format!("pocket_bonfire_item_test_{}", std::process::id()));
+        let store = Store::new(dir.clone());
+        let (a, b): (Vec<u16>, Vec<u16>) = ("Ana".encode_utf16().collect(), "Bo".encode_utf16().collect());
+        assert!(!store.item_given(&a));
+        store.mark_item_given(&a).unwrap();
+        assert!(store.item_given(&a));
+        assert!(!store.item_given(&b));
+        assert_eq!(store.load(&a), None);
+        store.save(&a, &sample()).unwrap();
+        assert_eq!(store.load(&a), Some(sample()));
+        assert!(store.item_given(&a));
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

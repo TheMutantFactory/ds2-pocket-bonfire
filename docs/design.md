@@ -15,7 +15,7 @@
 
 - Does the item work in NG+ / Bonfire Intensity? (Proposal: a pocket bonfire has no intensity and
   can't take Bonfire Ascetics.)
-- Where does the player get the item? (Proposal: you start with it, or it's sold by the Emerald Herald.)
+- Where does the player get the item? (For now: the mod gives each character one the first time it loads. A marker file next to the saved bonfire stops it giving another.)
 - Should it persist across quitting the game? (Proposal: yes. Store it per save slot, next to the save
   file, so it survives quitting and reloading.)
 - What should happen online? (Proposal: offline only, matching every other DLL mod in the stack.)
