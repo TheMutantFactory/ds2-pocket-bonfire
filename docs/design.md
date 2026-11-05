@@ -59,11 +59,22 @@ Observed in play (probe 0.1, 5 sessions, 33 warps):
 - **Reloads without a warp:** 65 of them, probably mostly deaths (not individually confirmed), make no `WarpFunc` call and land on the bonfire's fixed arrival position.
 - **`game_state`:** 30 is playable, 31 is leaving, then a mix of 18-21, 24 and 25, then 19, 28, 30. Position is readable from state 19 onward.
 
+Tested in play (probe 0.2, one session):
+- **Moving the player works.** Writing the three position copies lands within 0.05 units, on solid ground, in the same map. Four out of four.
+- **The rest call works anywhere.** `+0x17DC40` with the last bonfire's ID, away from any bonfire, opens the full bonfire menu, including level up and Travel, and the player stays where they stood. Three out of three. The manager's +0x30 and +0x38 fill in while the menu is open and are clear again by the next press.
+- **Travel from that menu works.** The game warped to Majula with its usual calls.
+- **The warp manager is `*(EventManager+0x70)`.** The game's own value logged `MATCH`.
+- **The rest effect** refills estus (reported in play), but the rest call does the whole job, so the mod doesn't need it.
+
+Bug under investigation: after Ctrl+F6, the player repeatedly tries to parry. The log shows about 0.5 units of movement along their facing within 2 s, after all four presses, and none after Ctrl+F8, so Ctrl alone looks innocent. It isn't yet known whether the F6 key or the position write causes it; probe 0.3 delays the write to separate them.
+
+Still unproven: warp then move (Ctrl+F7 was refused by the probe's own guard), moving after a death (Ctrl+F11 was off when the deaths happened), and whether the rest call respawns enemies and sets the respawn point.
+
 Risks, highest first:
 1. The Travel list may reject a row that has no MSB bonfire behind it. Fallback: a "Pocket Bonfire" entry in the bonfire menu instead, the way Bonfire Level Up swaps out an entry.
 2. **Choosing the host.** The host has to be in the map you're standing in, but we don't yet know where the game keeps the current map. LastBonfire isn't it: a kind 4 transition takes you into another map without changing it. The probe dumps `WarpManager` and nearby regions on Ctrl+F5 and F9 to look for it. Fallback: a table of map bounds.
 3. Moving the player right after a load may land before the ground has loaded at the target. The probe's Ctrl+F7 test watches for this.
-4. Resting by calling the menu with no bonfire object nearby could soft-lock. Fallback: apply BONFIREREST and set the respawn point without the menu.
+4. The move may leave the character in a bad state (the parry bug above), which would affect every arrival at a pocket bonfire.
 5. Steam patches. Everything is resolved by AOB, and the DLL switches itself off when the exe isn't the known version (module size `0x1D76000`).
 
 ## Build plan
