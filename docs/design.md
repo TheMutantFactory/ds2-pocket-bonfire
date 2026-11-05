@@ -55,7 +55,7 @@ Known building blocks, from DS2S-META (MIT, `Utils/Offsets/DS2REData.cs`, `Resou
 Observed in play (probe 0.1, 5 sessions, 33 warps):
 - **Warp struct:** +00 kind (3 = bonfire; 4 = a non-bonfire map transition with no `SetWarpTarget` call and a location ID at +18), +04 and +30 mode (2), +08 map ID as `0xAABBCCDD` = `mAA_BB_CC_DD`, +18 bonfire ID. **It has no coordinates,** so rewriting the destination in the struct is out.
 - **Bonfire IDs start with their map:** 4650 is m10_04, 16670 is m10_16, 31655 is m10_31.
-- **Travel** updates LastBonfire within about 70 ms of `WarpFunc`, before the load starts.
+- **Travel** updates LastBonfire within about 70 ms of `WarpFunc`, before the load starts (the menu does it, not `WarpFunc`; see below).
 - **Reloads without a warp:** 65 of them, probably mostly deaths (not individually confirmed), make no `WarpFunc` call and land on the bonfire's fixed arrival position.
 - **`game_state`:** 30 is playable, 31 is leaving, then a mix of 18-21, 24 and 25, then 19, 28, 30. Position is readable from state 19 onward.
 
@@ -66,16 +66,20 @@ Tested in play (probe 0.2, one session):
 - **The warp manager is `*(EventManager+0x70)`.** The game's own value logged `MATCH`.
 - **The rest effect** refills estus (reported in play), but the rest call does the whole job, so the mod doesn't need it.
 
-Bug under investigation: after Ctrl+F6, the player repeatedly tries to parry. The log shows about 0.5 units of movement along their facing within 2 s, after all four presses, and none after Ctrl+F8, so Ctrl alone looks innocent. It isn't yet known whether the F6 key or the position write causes it; probe 0.3 delays the write to separate them.
+Tested in play (probe 0.3, one session):
+- **The rest call respawns enemies** (reported in play), so it's a real rest.
+- **Moving after a death works.** A reload with no warp, ending at the host, then the write: on target to 0.000 units and still there 5 s later.
+- **Parrying isn't caused by the write.** It started during the 2 s wait, before the write, and F6 on its own stops it. Writes with no key involved, like the respawn move, left the player standing still. So it comes from the test keys (which game input they trigger isn't known). The mod uses no hotkeys.
+- **Coordinates are world-wide, and only the loaded map has ground.** A write into another map "succeeds", and the player falls through the world (z 27 to -160 in 5 s). Standing in m10_23 with LastBonfire in m10_04 was fine, so LastBonfire doesn't say what's loaded.
+- **`WarpFunc` doesn't update LastBonfire.** The Travel menu does that around it. After a probe warp, LastBonfire stayed on the old bonfire, and a death went back there. This corrects the 0.1 note above.
 
-Still unproven: warp then move (Ctrl+F7 was refused by the probe's own guard), moving after a death (Ctrl+F11 was off when the deaths happened), and whether the rest call respawns enemies and sets the respawn point.
+Still unproven: warp then move (0.3 skipped the move because of a wrong check in the probe, fixed in 0.4), and setting LastBonfire ourselves (DS2S-META's setter for the area field writes to the wrong address, so it's no evidence).
 
 Risks, highest first:
 1. The Travel list may reject a row that has no MSB bonfire behind it. Fallback: a "Pocket Bonfire" entry in the bonfire menu instead, the way Bonfire Level Up swaps out an entry.
-2. **Choosing the host.** The host has to be in the map you're standing in, but we don't yet know where the game keeps the current map. LastBonfire isn't it: a kind 4 transition takes you into another map without changing it. The probe dumps `WarpManager` and nearby regions on Ctrl+F5 and F9 to look for it. Fallback: a table of map bounds.
+2. **Choosing the host.** The host has to be in the map you're standing in, or the arrival drops the player through the world. We don't yet know where the game keeps the current map. LastBonfire isn't it: a kind 4 transition takes you into another map without changing it. Probe 0.4's F9 scans for map-shaped values to compare across maps. Fallback: a table of map bounds.
 3. Moving the player right after a load may land before the ground has loaded at the target. The probe's Ctrl+F7 test watches for this.
-4. The move may leave the character in a bad state (the parry bug above), which would affect every arrival at a pocket bonfire.
-5. Steam patches. Everything is resolved by AOB, and the DLL switches itself off when the exe isn't the known version (module size `0x1D76000`).
+4. Steam patches. Everything is resolved by AOB, and the DLL switches itself off when the exe isn't the known version (module size `0x1D76000`).
 
 ## Build plan
 

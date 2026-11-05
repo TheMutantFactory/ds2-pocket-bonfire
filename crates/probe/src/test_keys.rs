@@ -217,8 +217,11 @@ impl TestKeys {
         }
         log::line(format!("test: warping to host bonfire {} (manager {manager:#x})", spot.host));
         OUR_WARP.store(true, Ordering::SeqCst);
-        unsafe { addrs.warp_to_bonfire(manager, spot.host) };
+        let map_id = unsafe { addrs.warp_to_bonfire(manager, spot.host) };
         OUR_WARP.store(false, Ordering::SeqCst);
+        // Our warp doesn't update these the way the Travel menu does.
+        let ok = addrs.set_last_bonfire(spot.host, map_id);
+        log::line(format!("test: set last bonfire to {} in map {map_id:#x}, ok={ok}", spot.host));
         self.pending = Pending::WaitLeave { since: Instant::now() };
         true
     }
@@ -259,7 +262,10 @@ impl TestKeys {
                         since.elapsed().as_secs_f32(),
                         fmt_snapshot(now)
                     ));
-                    if now.last_bonfire == host {
+                    // A warp was aimed at the host. A respawn goes to the last bonfire, which might not
+                    // be the host, and then the spot's map isn't loaded: the write would drop the
+                    // player through the world.
+                    if why == "warp" || now.last_bonfire == host {
                         self.move_now(addrs, why);
                     } else {
                         log::line(format!("test: {why} move skipped, last bonfire isn't the host {host:?}"));

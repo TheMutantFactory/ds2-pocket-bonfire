@@ -40,6 +40,9 @@ pub const SIGNATURES: [(&str, &str); 5] = [
 /// DS2S-META's `SPECIAL_EFFECT.BONFIREREST`: refills HP and estus without touching enemies.
 pub const SP_EFFECT_BONFIRE_REST: i32 = 110_000_010;
 
+/// Within the warp struct.
+pub const OFF_WARP_MAP_ID: usize = 0x08;
+
 /// BaseA children.
 pub const OFF_PLAYER_CTRL: usize = 0xd0;
 pub const OFF_EVENT_MANAGER: usize = 0x70;
@@ -161,7 +164,10 @@ impl Addresses {
     ///
     /// # Safety
     /// Calls into the game. `manager` must be the live warp manager, and the player must be in control.
-    pub unsafe fn warp_to_bonfire(&self, manager: usize, bonfire_id: u16) {
+    ///
+    /// Returns the bonfire's map id, from the warp struct. Unlike Travel this leaves LastBonfire
+    /// alone, so follow it with `set_last_bonfire` if death should bring the player back here.
+    pub unsafe fn warp_to_bonfire(&self, manager: usize, bonfire_id: u16) -> u32 {
         #[repr(align(16))]
         struct WarpStruct([u8; 0x200]);
         type SetTarget = unsafe extern "system" fn(*mut u8, u64, u64, u64) -> *mut u8;
@@ -173,7 +179,15 @@ impl Addresses {
         let filled = set_target(warp.0.as_mut_ptr(), bonfire_id as u64, 2, 0);
         // Kind 3 = "warp to the bonfire"; anything else lands at the area's default start.
         *(filled as *mut u32) = 3;
+        let map_id = *(filled.add(OFF_WARP_MAP_ID) as *const u32);
         do_warp(manager, filled);
+        map_id
+    }
+
+    /// Sets where the player respawns: the fields the Travel menu updates when it warps.
+    pub fn set_last_bonfire(&self, bonfire_id: u16, map_id: u32) -> bool {
+        let Some(em) = self.event_manager() else { return false };
+        mem::write(em + OFF_LAST_BONFIRE, bonfire_id) && mem::write(em + OFF_LAST_BONFIRE_AREA, map_id)
     }
 
     /// Applies a SpEffect to the player. Returns false if the player isn't available.

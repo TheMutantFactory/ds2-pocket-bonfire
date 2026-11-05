@@ -153,7 +153,12 @@ fn sample_loop(addrs: &Addresses) {
 
         let down = key_is_down(VK_F9);
         if down && !f9_down {
-            log::line(format!("F9 snapshot: {}\n{}", fmt_snapshot(&now), dump_regions(addrs)));
+            log::line(format!(
+                "F9 snapshot: {}\n{}\n  map id candidates:\n{}",
+                fmt_snapshot(&now),
+                dump_regions(addrs),
+                map_id_candidates(addrs)
+            ));
         }
         f9_down = down;
     }
@@ -171,6 +176,43 @@ pub(crate) fn dump_regions(addrs: &Addresses) -> String {
         region("WarpManager", addrs.warp_manager(), 0, 0x80),
     ]
     .join("\n")
+}
+
+/// Read-only hunt for where the game keeps the map the player is standing in: every u32 shaped like a
+/// map id (0xAABB0000, AA a known map group) in the game manager, the event manager, the player and
+/// anything they point directly at. Comparing two F9 presses in different maps, with no rest between
+/// them, leaves the fields that follow the player rather than the last bonfire.
+fn map_id_candidates(addrs: &Addresses) -> String {
+    const SCAN: usize = 0x800;
+    let is_map_id = |v: u32| v & 0xffff == 0 && matches!(v >> 24, 10 | 20 | 40 | 50) && (v >> 16) & 0xff != 0;
+    let scan = |name: &str, base: usize, out: &mut Vec<String>| {
+        let Some(bytes) = mem::read_bytes(base, SCAN) else { return };
+        for (i, w) in bytes.as_chunks::<4>().0.iter().enumerate() {
+            let v = u32::from_le_bytes(*w);
+            if is_map_id(v) {
+                out.push(format!("    {name}+{:#x} = {v:#x}", i * 4));
+            }
+        }
+    };
+    let mut out = Vec::new();
+    let roots = [("BaseA", addrs.base_a()), ("EventManager", addrs.event_manager()), ("PlayerCtrl", addrs.player_ctrl())];
+    for (name, base) in roots {
+        let Some(base) = base else { continue };
+        scan(name, base, &mut out);
+        let Some(bytes) = mem::read_bytes(base, SCAN) else { continue };
+        for (i, q) in bytes.as_chunks::<8>().0.iter().enumerate() {
+            let child = u64::from_le_bytes(*q) as usize;
+            // User-mode heap and module pointers only; everything else in here is plain data.
+            if (0x10000..0x7fff_ffff_ffff).contains(&child) {
+                scan(&format!("{name}->{:#x}", i * 8), child, &mut out);
+            }
+        }
+    }
+    if out.is_empty() {
+        "    (none)".into()
+    } else {
+        out.join("\n")
+    }
 }
 
 pub(crate) fn fmt_snapshot(s: &Snapshot) -> String {
