@@ -106,14 +106,14 @@ fn run() {
     let _ = ADDRS.set(addrs);
     let _ = ITEM_TEXT.set([utf16(item::NAME), utf16(item::SIMPLE), utf16(item::DETAILED)]);
 
-    let hooked = unsafe {
+    let hooked = ds2::hooks::serialized(|| unsafe {
         install(addrs.apply_sp_effect, apply_sp_effect_detour as *mut c_void, &ORIG_APPLY_SP_EFFECT)
             .and_then(|_| install(addrs.warp_func, warp_func_detour as *mut c_void, &ORIG_WARP_FUNC))
             .and_then(|_| install(addrs.fmg_lookup, fmg_lookup_detour as *mut c_void, &ORIG_FMG_LOOKUP))
             .and_then(|_| install(addrs.title_init_branch, title_init_branch_detour as *mut c_void, &ORIG_TITLE_INIT_BRANCH))
             .and_then(|_| install(addrs.title_network_check, title_network_check_detour as *mut c_void, &ORIG_TITLE_NETWORK_CHECK))
             .and_then(|_| MinHook::enable_all_hooks().map_err(|e| format!("enable: {e:?}")))
-    };
+    });
     if let Err(e) = hooked {
         log::line(format!("disabled, hooks failed: {e}"));
         return;
