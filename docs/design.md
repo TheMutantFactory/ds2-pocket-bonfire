@@ -73,11 +73,16 @@ Tested in play (probe 0.3, one session):
 - **Coordinates are world-wide, and only the loaded map has ground.** A write into another map "succeeds", and the player falls through the world (z 27 to -160 in 5 s). Standing in m10_23 with LastBonfire in m10_04 was fine, so LastBonfire doesn't say what's loaded.
 - **`WarpFunc` doesn't update LastBonfire.** The Travel menu does that around it. After a probe warp, LastBonfire stayed on the old bonfire, and a death went back there. This corrects the 0.1 note above.
 
-Still unproven: warp then move (0.3 skipped the move because of a wrong check in the probe, fixed in 0.4), and setting LastBonfire ourselves (DS2S-META's setter for the area field writes to the wrong address, so it's no evidence).
+Tested in play (probe 0.4, one session):
+- **Warp then move works.** From Majula to the host, then the write: on target and still there 5 s later, on solid ground. So Travel to a pocket bonfire has a working path.
+- **Moving after a death** worked again, also on target.
+- **Current map candidates.** With LastBonfire in m10_23 (`0xa170000`), 32 fields read m10_17 (`0xa110000`) at each of five F9 presses, so they follow the player, not LastBonfire. `EventManager+0x2a4` is the leading one. Harvest Valley and Earthen Peak turned out to be the same map, so the walk between them couldn't separate the candidates; probe 0.5 logs eight of them through real transitions.
+
+Still unproven: dying after we've set LastBonfire ourselves. The write held through the load (0.4), but no death followed it. DS2S-META's setter for the area field writes to the wrong address, so it's no evidence.
 
 Risks, highest first:
 1. The Travel list may reject a row that has no MSB bonfire behind it. Fallback: a "Pocket Bonfire" entry in the bonfire menu instead, the way Bonfire Level Up swaps out an entry.
-2. **Choosing the host.** The host has to be in the map you're standing in, or the arrival drops the player through the world. We don't yet know where the game keeps the current map. LastBonfire isn't it: a kind 4 transition takes you into another map without changing it. Probe 0.4's F9 scans for map-shaped values to compare across maps. Fallback: a table of map bounds.
+2. **Choosing the host.** The host has to be in the map you're standing in, or the arrival drops the player through the world. We don't yet know where the game keeps the current map. LastBonfire isn't it: a kind 4 transition takes you into another map without changing it. Candidates are recorded above. Fallback: a table of map bounds.
 3. Moving the player right after a load may land before the ground has loaded at the target. The probe's Ctrl+F7 test watches for this.
 4. Steam patches. Everything is resolved by AOB, and the DLL switches itself off when the exe isn't the known version (module size `0x1D76000`).
 

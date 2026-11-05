@@ -16,7 +16,7 @@ use ds2::game::{self, Addresses, Snapshot};
 use ds2::mem;
 use minhook::MinHook;
 use std::ffi::c_void;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::OnceLock;
 use std::time::Duration;
 
@@ -32,6 +32,8 @@ pub(crate) static GAME_WARP_MANAGER: AtomicUsize = AtomicUsize::new(0);
 /// Set by any `WarpFunc` call, cleared when the next load finishes. A reload that happens with this
 /// clear didn't go through a warp, like a death respawn.
 pub(crate) static WARP_SEEN: AtomicBool = AtomicBool::new(false);
+/// The map the last `WarpFunc` was aimed at.
+static LAST_WARP_MAP: AtomicU32 = AtomicU32::new(0);
 /// True while the probe itself is calling `WarpFunc`, so `GAME_WARP_MANAGER` stays the game's own value.
 pub(crate) static OUR_WARP: AtomicBool = AtomicBool::new(false);
 
@@ -119,6 +121,9 @@ unsafe extern "system" fn warp_func_detour(manager: *mut u8, warp: *mut u8) -> u
         GAME_WARP_MANAGER.store(manager as usize, Ordering::SeqCst);
     }
     WARP_SEEN.store(true, Ordering::SeqCst);
+    if let Some(map_id) = mem::read::<u32>(warp as usize + game::OFF_WARP_MAP_ID) {
+        LAST_WARP_MAP.store(map_id, Ordering::SeqCst);
+    }
     let expected = ADDRS.get().and_then(|a| a.warp_manager());
     log::line(format!(
         "WarpFunc[{}](manager={manager:p}, *(EventManager+0x70)={}, warp={warp:p})\n{}\n  state before: {}",
@@ -137,6 +142,7 @@ fn sample_loop(addrs: &Addresses) {
     let mut last = Snapshot::default();
     let mut f9_down = false;
     let mut tests = test_keys::TestKeys::default();
+    let mut last_fields = [None; MAP_FIELDS.len()];
     loop {
         std::thread::sleep(Duration::from_millis(50));
         let now = addrs.snapshot();
@@ -149,6 +155,20 @@ fn sample_loop(addrs: &Addresses) {
             log::line(format!("state: {}", fmt_snapshot(&now)));
         }
         tests.tick(addrs, &now, &last);
+
+        let fields = read_map_fields(addrs);
+        let arrived = now.game_state == Some(game::GAME_STATE_PLAYABLE) && last.game_state != Some(game::GAME_STATE_PLAYABLE);
+        if fields != last_fields || arrived {
+            // Each warp's target map says what a correct field should read on arrival.
+            log::line(format!(
+                "map fields{}: {}  last warp target {:#x}  {}",
+                if arrived { " (arrived)" } else { "" },
+                fmt_map_fields(&fields),
+                LAST_WARP_MAP.load(Ordering::SeqCst),
+                fmt_snapshot(&now)
+            ));
+            last_fields = fields;
+        }
         last = now;
 
         let down = key_is_down(VK_F9);
@@ -176,6 +196,46 @@ pub(crate) fn dump_regions(addrs: &Addresses) -> String {
         region("WarpManager", addrs.warp_manager(), 0, 0x80),
     ]
     .join("\n")
+}
+
+/// Fields that read m10_17 while LastBonfire was in m10_23, so they follow the player: name, root,
+/// child offset (dereferenced, 0 for the root itself) and field offset. One map can't tell them
+/// apart, so they're logged whenever they change, to see which stay right across real transitions.
+const MAP_FIELDS: [(&str, Root, usize, usize); 8] = [
+    ("EM+2a4", Root::Event, 0, 0x2a4),
+    ("EM>20+2d8", Root::Event, 0x20, 0x2d8),
+    ("EM>30+c0", Root::Event, 0x30, 0xc0),
+    ("Base>30+360", Root::Base, 0x30, 0x360),
+    ("Base>40+2f4", Root::Base, 0x40, 0x2f4),
+    ("Base>78+580", Root::Base, 0x78, 0x580),
+    ("Base>a8+1b8", Root::Base, 0xa8, 0x1b8),
+    ("Base>b0+6a8", Root::Base, 0xb0, 0x6a8),
+];
+
+#[derive(Clone, Copy)]
+enum Root {
+    Base,
+    Event,
+}
+
+fn read_map_fields(addrs: &Addresses) -> [Option<u32>; MAP_FIELDS.len()] {
+    MAP_FIELDS.map(|(_, root, child, field)| {
+        let base = match root {
+            Root::Base => addrs.base_a(),
+            Root::Event => addrs.event_manager(),
+        }?;
+        let parent = if child == 0 { base } else { mem::ptr(base + child)? };
+        mem::read::<u32>(parent + field)
+    })
+}
+
+fn fmt_map_fields(values: &[Option<u32>; MAP_FIELDS.len()]) -> String {
+    MAP_FIELDS
+        .iter()
+        .zip(values)
+        .map(|((name, ..), v)| format!("{name}={}", v.map_or("none".to_string(), |v| format!("{v:#x}"))))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Read-only hunt for where the game keeps the map the player is standing in: every u32 shaped like a
