@@ -7,15 +7,15 @@ Draft for the Dark Souls II page. Publishing is manual: paste these fields, uplo
 |---|---|
 | Name | Pocket Bonfire |
 | Author | mutantfactory |
-| Version | 0.8.0 |
+| Version | 0.10.0 |
 | Category | Gameplay |
-| Requirements | Load Loose Param Files (DS2 1092), Lazy Loader (DS3 677), Mod Engine |
-| Online | Offline only |
+| Requirements | None, Lazy Loader is included |
+| Online | Offline only: the mod blocks network access |
 | Source | https://github.com/TheMutantFactory/ds2-pocket-bonfire |
 
 ## Summary
 
-A reusable feather that makes the spot you're standing on your respawn point and a place to rest. Shorter boss runs, anywhere you like.
+A reusable feather that makes the spot you're standing on your respawn point and a place to rest. Shorter boss runs, anywhere you like. Unzip and play: offline, with a fast start.
 
 ## Description (BBCode)
 
@@ -23,6 +23,8 @@ A reusable feather that makes the spot you're standing on your respawn point and
 [size=5][b]Pocket Bonfire[/b][/size]
 
 A reusable feather that makes the spot you're standing on your respawn point and a place to rest. Its main use is cutting down boss runs. DS2 being DS2, you'll probably find others.
+
+[b]This mod keeps the game offline and starts it faster.[/b] While it's installed, the game can't connect to its servers, so there's no multiplayer, messages or summoning. It also skips the logos and the network check, and goes straight to the title menu.
 
 [b]How it works[/b]
 [list]
@@ -32,42 +34,31 @@ A reusable feather that makes the spot you're standing on your respawn point and
 [/list]
 Every character gets one feather the first time you load it after installing. Put it in an item slot to use it.
 
+[b]Install[/b]
+You need the Steam version of Scholar of the First Sin, 1.03. On any other exe, the mod logs that and turns off everything except the network block.
+[list=1]
+[*]Back up your saves, from %APPDATA%\DarkSoulsII.
+[*]If Game\dinput8.dll already exists and came from a mod other than Lazy Loader, rename it to something like othermod.dll and move it to Game\dllMods\, creating the folder if needed.
+[*]Extract the zip into the game's Steam folder, the one that contains Game\. Vortex's DS2 support deploys to this folder too.
+[/list]
+That's all. The zip includes [url=https://www.nexusmods.com/darksouls3/mods/677]Lazy Loader[/url], which loads the mod. If you already use it, your lazyLoad.ini isn't touched.
+
 [b]Rules and limits[/b]
 [list]
 [*]The bonfire you last rested at has to be in the map you're standing in. If it isn't, you hear a low beep and nothing is placed.
-[*]Nothing shows at the spot. There's no flame or marker yet, so remember where you put it.
+[*]Nothing shows at the spot. There's no flame or marker, so remember where you put it.
 [*]Using the feather away from the spot moves it, with no confirmation.
 [*]You can Travel out from it, but it isn't listed as a destination.
 [*]It isn't blocked anywhere. You can place it in combat or inside a boss arena, and a respawn inside an arena hasn't been tested. Placing it outside the fog is the safe choice.
 [*]Resting at a real bonfire makes that bonfire your respawn point. Rest at the pocket bonfire, or place it again, to switch back.
 [*]You may see the real bonfire for a moment when you respawn, because the mod moves you after the game's own respawn.
-[*]English text only.
+[*]The feather's name and description show in English in every language.
 [/list]
 
-[b]Requirements[/b]
-[list]
-[*]Steam version of Scholar of the First Sin, 1.03. On any other exe the mod logs that and turns itself off.
-[*][url=https://www.nexusmods.com/darksouls2/mods/1092]Load Loose Param Files[/url]
-[*][url=https://www.nexusmods.com/darksouls3/mods/677]Lazy Loader[/url] (listed under DS3, works here)
-[*]Mod Engine, bundled with many DS2 mods. [url=https://www.nexusmods.com/darksouls2/mods/1329]True Easy Parry[/url] is the copy this was tested with.
-[/list]
-[b]Play offline.[/b] Mod Engine blocks network access by default. Leave that on, since going online with a modded game risks a ban.
+[b]Other mods[/b]
+The feather's data and text are added in memory, so the mod doesn't replace any game files and can't conflict with mods that change params or text.
 
-[b]Install[/b]
-Back up your saves first, from %APPDATA%\DarkSoulsII.
-[list=1]
-[*]Install Load Loose Param Files into Game\, the folder with DarkSoulsII.exe.
-[*]Install Lazy Loader: dinput8.dll and lazyLoad.ini go in Game\, without the zip's v2.0.0\ folder.
-[*]Set up Mod Engine under Lazy Loader. Rename its dinput8.dll to modengine.dll and put it in Game\dllMods\. Its modengine.ini goes in Game\.
-[*]Extract this mod's zip into the game's Steam folder, the one that contains Game\. Vortex's DS2 support deploys to this folder too.
-[*]In Game\lazyLoad.ini, list modengine.dll and pocket_bonfire.dll under [LOADORDER], keeping any others you have.
-[/list]
-Install this mod after Load Loose Param Files, or the framework will overwrite this mod's ItemParam.param.
-
-[b]Conflicts[/b]
-This mod replaces Game\Param\ItemParam.param and three text files in Game\mod\menu\text\english\ (itemname, simpleexplanation, detailedexplanation). It conflicts with any mod that ships the same files. If another mod's ItemParam wins, the feather won't exist in the game. If its text files win, the feather has no name or description.
-
-Played alongside Bonfire Level Up, StatFixer, True Easy Parry, RIP Enemies, No More Adaptability, DS2 Lighting Engine and Texture Renewal Project.
+Played alongside Bonfire Level Up, StatFixer, True Easy Parry, RIP Enemies, No More Adaptability, Load Loose Param Files, Mod Engine, DS2 Lighting Engine and Texture Renewal Project.
 
 [b]Uninstall and bug reports[/b]
 Uninstall steps are in the included README. Loading a save that still holds the feather after removing the mod is untested, so keep your save backup.
@@ -78,6 +69,8 @@ For bug reports, attach Game\dllMods\pocket_bonfire.log.
 [list]
 [*][url=https://github.com/pseudostripy/DS2S-META]DS2S-META[/url] by pseudostripy: offsets and signatures
 [*]Bob's DS2 cheat table: the remote rest call and how the game's functions are called
+[*][url=https://github.com/katalash/ModEngine]Mod Engine[/url] by Katalash: the approach to blocking the network
+[*][url=https://www.nexusmods.com/darksouls3/mods/677]Lazy Loader[/url] by Church Guard: loading the mod
 [*][url=https://github.com/TsudaKageyu/minhook]MinHook[/url] by Tsuda Kageyu and the minhook crate by Jakobzs: function hooking
 [/list]
 

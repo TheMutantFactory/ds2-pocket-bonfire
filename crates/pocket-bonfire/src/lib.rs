@@ -40,6 +40,7 @@ static ITEM_USED: AtomicBool = AtomicBool::new(false);
 static WARP_SEEN: AtomicBool = AtomicBool::new(false);
 static TEXT_SERVED: AtomicBool = AtomicBool::new(false);
 static NETWORK_BLOCKED: AtomicBool = AtomicBool::new(false);
+static NETWORK_REFUSED: AtomicBool = AtomicBool::new(false);
 
 /// The item's strings as the game wants them, NUL-terminated UTF-16 that lives as long as the process.
 static ITEM_TEXT: OnceLock<[Vec<u16>; 3]> = OnceLock::new();
@@ -87,6 +88,7 @@ unsafe fn block_network() -> bool {
 const WSASYSNOTREADY: i32 = 10091;
 
 unsafe extern "system" fn wsa_startup_detour(_version: u16, _data: *mut c_void) -> i32 {
+    NETWORK_REFUSED.store(true, Ordering::SeqCst);
     WSASYSNOTREADY
 }
 
@@ -267,6 +269,9 @@ impl Mod {
         let was_playable = last.game_state == Some(GAME_STATE_PLAYABLE);
 
         self.keep_item_row(addrs);
+        if NETWORK_REFUSED.swap(false, Ordering::SeqCst) {
+            log::line("network start refused".into());
+        }
         if !self.text_logged && TEXT_SERVED.load(Ordering::SeqCst) {
             self.text_logged = true;
             log::line("item text served".into());

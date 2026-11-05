@@ -6,7 +6,6 @@
 
 #![cfg(all(windows, target_pointer_width = "64"))]
 
-pub mod fmg;
 pub mod game;
 pub mod item;
 pub mod log;
