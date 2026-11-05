@@ -27,6 +27,7 @@ const STRUCT_DUMP: usize = 0x80;
 static ADDRS: OnceLock<Addresses> = OnceLock::new();
 static ORIG_SET_WARP_TARGET: AtomicUsize = AtomicUsize::new(0);
 static ORIG_WARP_FUNC: AtomicUsize = AtomicUsize::new(0);
+static ORIG_APPLY_SP_EFFECT: AtomicUsize = AtomicUsize::new(0);
 /// The warp manager the game itself last passed to `WarpFunc`; 0 until the game has warped.
 pub(crate) static GAME_WARP_MANAGER: AtomicUsize = AtomicUsize::new(0);
 /// Set by any `WarpFunc` call, cleared when the next load finishes. A reload that happens with this
@@ -81,6 +82,7 @@ fn run() {
     unsafe {
         match install(addrs.set_warp_target, set_warp_target_detour as *mut c_void, &ORIG_SET_WARP_TARGET)
             .and_then(|_| install(addrs.warp_func, warp_func_detour as *mut c_void, &ORIG_WARP_FUNC))
+            .and_then(|_| install(addrs.apply_sp_effect, apply_sp_effect_detour as *mut c_void, &ORIG_APPLY_SP_EFFECT))
             .and_then(|_| MinHook::enable_all_hooks().map_err(|e| format!("enable: {e:?}")))
         {
             Ok(()) => log::line("hooks enabled".into()),
@@ -111,6 +113,34 @@ unsafe extern "system" fn set_warp_target_detour(out: *mut u8, id: u64, mode: u6
         mode as u32 as i32,
         dump(ret as usize, STRUCT_DUMP)
     ));
+    ret
+}
+
+type ApplySpEffectFn = unsafe extern "system" fn(usize, *const u8, u64, u64, u64, u64, u64, u64) -> u64;
+
+/// `ApplySpEffect(ctrl, effect_struct, ...)`, logging only effects on the player, to see what using
+/// an item looks like from here. The real argument list isn't known past the sixth (a float), so
+/// the stack slots are passed through raw, and the original runs first so nothing has touched the
+/// float registers. Enemies use this function too, so it stays quiet about them.
+unsafe extern "system" fn apply_sp_effect_detour(
+    ctrl: usize,
+    effect: *const u8,
+    r8: u64,
+    r9: u64,
+    s5: u64,
+    s6: u64,
+    s7: u64,
+    s8: u64,
+) -> u64 {
+    let orig: ApplySpEffectFn = std::mem::transmute(ORIG_APPLY_SP_EFFECT.load(Ordering::SeqCst));
+    let ret = orig(ctrl, effect, r8, r9, s5, s6, s7, s8);
+    if ADDRS.get().and_then(|a| a.sp_effect_ctrl()) == Some(ctrl) {
+        log::line(format!(
+            "ApplySpEffect id={} -> {ret:#x}\n{}",
+            mem::read::<i32>(effect as usize).unwrap_or(-1),
+            dump(effect as usize, 0x20)
+        ));
+    }
     ret
 }
 

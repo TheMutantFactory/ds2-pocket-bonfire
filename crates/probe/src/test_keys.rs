@@ -8,6 +8,7 @@
 //! | Ctrl+F8   | Rest effect only (SpEffect 110000010): HP and estus. |
 //! | Ctrl+F10  | Remote "rest at bonfire" call for the last bonfire. |
 //! | Ctrl+F11  | Toggle: after a reload with no warp (a death), move to the saved spot. |
+//! | Ctrl+F3   | Give one of each test item (see `examples/make_test_items.rs`). |
 //!
 //! Every key needs the game focused and the player in control, so nothing fires during a load or
 //! a menu transition. Each move is then watched for 5 s, to catch falling through unloaded ground.
@@ -22,13 +23,17 @@ use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 const VK_CONTROL: i32 = 0x11;
+const VK_F3: i32 = 0x72;
 const VK_F5: i32 = 0x74;
 const VK_F6: i32 = 0x75;
 const VK_F7: i32 = 0x76;
 const VK_F8: i32 = 0x77;
 const VK_F10: i32 = 0x79;
 const VK_F11: i32 = 0x7A;
-const KEYS: [i32; 6] = [VK_F5, VK_F6, VK_F7, VK_F8, VK_F10, VK_F11];
+const KEYS: [i32; 7] = [VK_F3, VK_F5, VK_F6, VK_F7, VK_F8, VK_F10, VK_F11];
+/// Rows added by `examples/make_test_items.rs`. Giving an id that isn't in ItemParam isn't safe, so
+/// the key checks nothing else: the DLL and the param go in together.
+const TEST_ITEMS: [u32; 2] = [60355010, 60355020];
 
 /// A warp that hasn't started loading after this long has failed.
 const LEAVE_TIMEOUT: Duration = Duration::from_secs(15);
@@ -156,6 +161,11 @@ impl TestKeys {
             return false;
         }
         match key {
+            VK_F3 => TEST_ITEMS.iter().all(|&id| {
+                let ok = unsafe { addrs.give_item(id, 1) };
+                log::line(format!("test: gave item {id}, ok={ok}"));
+                ok
+            }),
             VK_F5 => self.save_spot(addrs, now),
             VK_F6 => self.delay_move(now),
             VK_F7 => self.warp_then_move(addrs),

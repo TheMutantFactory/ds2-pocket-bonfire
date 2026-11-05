@@ -28,13 +28,17 @@ pub const AOB_APPLY_SP_EFFECT: &str = "48 89 6C 24 F8 48 8D 64 24 F8 48 8D 2D 33
 /// 1.03). What it does with no bonfire nearby is what the probe is here to find out.
 pub const AOB_REST_AT_BONFIRE: &str = "40 53 48 83 EC 20 83 79 38 00 48 8B D9 75 39 85 D2 74 35 48 83 79 30 00 75 2E E8";
 
+/// `ItemGive(item_bag*, item_structs*, u32 count, 0)`, adding items with no on-screen window.
+pub const AOB_ITEM_GIVE: &str = "48 89 5C 24 18 56 57 41 56 48 83 EC 30 45 8B F1 41";
+
 /// Every signature the mod depends on, for `resolve` and the offline scanner.
-pub const SIGNATURES: [(&str, &str); 5] = [
+pub const SIGNATURES: [(&str, &str); 6] = [
     ("BaseA", AOB_BASE_A),
     ("SetWarpTarget", AOB_SET_WARP_TARGET),
     ("WarpFunc", AOB_WARP_FUNC),
     ("ApplySpEffect", AOB_APPLY_SP_EFFECT),
     ("RestAtBonfire", AOB_REST_AT_BONFIRE),
+    ("ItemGive", AOB_ITEM_GIVE),
 ];
 
 /// DS2S-META's `SPECIAL_EFFECT.BONFIREREST`: refills HP and estus without touching enemies.
@@ -59,6 +63,8 @@ pub const OFF_SP_EFFECT_CTRL: usize = 0x3e0;
 pub const GAME_STATE_PLAYABLE: u32 = 30;
 /// Within PlayerDataMap: three copies of y, z, x, 0x10 apart. Writing all three moves the player.
 pub const OFF_STABLE_POS: [usize; 3] = [0x1a0, 0x1b0, 0x1c0];
+/// BaseA -> 0xa8 -> 0x10 -> 0x10 is the player's item bag.
+pub const CHAIN_ITEM_BAG: [usize; 3] = [0xa8, 0x10, 0x10];
 /// PlayerCtrl -> 0xf8 -> 0xf0 is the position block.
 pub const CHAIN_POSITION: [usize; 2] = [0xf8, 0xf0];
 /// PlayerCtrl -> 0x100 -> 0x320 -> 0x20: holds the three "stable" warp positions at 0x1a0..0x1c8.
@@ -81,6 +87,7 @@ pub struct Addresses {
     pub warp_func: usize,
     pub apply_sp_effect: usize,
     pub rest_at_bonfire: usize,
+    pub item_give: usize,
 }
 
 #[derive(Debug)]
@@ -119,6 +126,7 @@ pub fn resolve() -> Result<Addresses, ResolveError> {
         warp_func: find("WarpFunc", AOB_WARP_FUNC)?,
         apply_sp_effect: find("ApplySpEffect", AOB_APPLY_SP_EFFECT)?,
         rest_at_bonfire: find("RestAtBonfire", AOB_REST_AT_BONFIRE)?,
+        item_give: find("ItemGive", AOB_ITEM_GIVE)?,
     })
 }
 
@@ -222,6 +230,34 @@ impl Addresses {
         let effect = Effect { id, one: 1, _pad: 0, flags: 0x219, _rest: [0; 0x10] };
         let apply: Apply = std::mem::transmute(self.apply_sp_effect);
         apply(ctrl, &effect, 0, 0, 0, -1.0);
+        true
+    }
+
+    /// The player's SpEffectCtrl, the first argument of `ApplySpEffect` for effects on the player.
+    pub fn sp_effect_ctrl(&self) -> Option<usize> {
+        mem::ptr(self.player_ctrl()? + OFF_SP_EFFECT_CTRL)
+    }
+
+    /// Adds `amount` of an item to the inventory, silently. Returns false if the bag isn't available.
+    ///
+    /// # Safety
+    /// Calls into the game. The player must be in control, and `id` must be a row in ItemParam.
+    pub unsafe fn give_item(&self, id: u32, amount: u16) -> bool {
+        #[repr(C, align(16))]
+        struct ItemStruct {
+            kind: i32,
+            id: u32,
+            durability: f32,
+            amount: u16,
+            upgrade: u8,
+            infusion: u8,
+        }
+        type Give = unsafe extern "system" fn(usize, *const ItemStruct, u32, u32) -> u64;
+
+        let Some(bag) = self.base_a().and_then(|b| mem::chain(b, &CHAIN_ITEM_BAG)) else { return false };
+        let item = ItemStruct { kind: 3, id, durability: f32::MAX, amount, upgrade: 0, infusion: 0 };
+        let give: Give = std::mem::transmute(self.item_give);
+        give(bag, &item, 1, 0);
         true
     }
 

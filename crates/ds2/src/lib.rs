@@ -9,5 +9,6 @@
 pub mod game;
 pub mod mem;
 pub mod module;
+pub mod param;
 pub mod scan;
 mod win;
