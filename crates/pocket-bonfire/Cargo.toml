@@ -1,0 +1,14 @@
+[package]
+name = "pocket-bonfire"
+description = "A reusable DS2 SotFS item that places your own bonfire where you stand"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "pocket_bonfire"
+crate-type = ["cdylib"]
+
+[dependencies]
+ds2.workspace = true
+minhook.workspace = true
