@@ -42,6 +42,10 @@ pub const SP_EFFECT_BONFIRE_REST: i32 = 110_000_010;
 
 /// Within the warp struct.
 pub const OFF_WARP_MAP_ID: usize = 0x08;
+/// BaseA child and field of the two values that follow the player's map. Found by probe, not from
+/// DS2S-META: they were right after 6 of 6 warps and through 2 walked boundaries, and unlike the
+/// other candidates they never read as junk during a load or lag behind an arrival.
+pub const CURRENT_MAP_FIELDS: [(usize, usize); 2] = [(0x30, 0x360), (0x78, 0x580)];
 
 /// BaseA children.
 pub const OFF_PLAYER_CTRL: usize = 0xd0;
@@ -141,6 +145,15 @@ impl Addresses {
     }
     pub fn player_data_map(&self) -> Option<usize> {
         mem::chain(self.player_ctrl()?, &CHAIN_PLAYER_DATA_MAP)
+    }
+
+    /// The map the player is standing in, as 0xAABBCCDD = mAA_BB_CC_DD. `None` if the two fields that
+    /// track it disagree, so a caller never picks a host bonfire on a doubtful answer.
+    pub fn current_map(&self) -> Option<u32> {
+        let base = self.base_a()?;
+        let read = |(child, field): (usize, usize)| mem::read::<u32>(mem::ptr(base + child)? + field);
+        let (a, b) = (read(CURRENT_MAP_FIELDS[0])?, read(CURRENT_MAP_FIELDS[1])?);
+        (a == b).then_some(a)
     }
 
     pub fn warp_manager(&self) -> Option<usize> {

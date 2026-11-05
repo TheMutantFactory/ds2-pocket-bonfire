@@ -78,11 +78,18 @@ Tested in play (probe 0.4, one session):
 - **Moving after a death** worked again, also on target.
 - **Current map candidates.** With LastBonfire in m10_23 (`0xa170000`), 32 fields read m10_17 (`0xa110000`) at each of five F9 presses, so they follow the player, not LastBonfire. `EventManager+0x2a4` is the leading one. Harvest Valley and Earthen Peak turned out to be the same map, so the walk between them couldn't separate the candidates; probe 0.5 logs eight of them through real transitions.
 
-Still unproven: dying after we've set LastBonfire ourselves. The write held through the load (0.4), but no death followed it. DS2S-META's setter for the area field writes to the wrong address, so it's no evidence.
+Tested in play (probe 0.5, one session):
+- **The current map is at `*(BaseA+0x30)+0x360`, mirrored at `*(BaseA+0x78)+0x580`.** Both matched the target map after 6 of 6 warps, flipped to m10_10 as the player walked from Majula into Forest of the Fallen Giants, and read m10_17 after the earlier walk there from m10_23.
+- **Rejected candidates:** `EventManager+0x2a4` (my leading guess) and `*(BaseA+0xb0)+0x6a8` aren't map IDs at all. `*(EventManager+0x30)+0xc0` holds pointers much of the time. `*(EventManager+0x20)+0x2d8` and `*(BaseA+0x40)+0x2f4` read `0xffffffff` during loads. `*(BaseA+0xa8)+0x1b8` lags an arrival by about 100 ms.
+
+Still unproven:
+- Whether the map fields are right after a kind 4 transition. Only walks and bonfire warps were seen.
+- Whether the warp works with an unlit host. If you've lit no bonfire in the map you're standing in, the only hosts are unlit ones.
+- Dying after we've set LastBonfire ourselves. The write held through the load (0.4), but no death followed it. DS2S-META's setter for the area field writes to the wrong address, so it's no evidence.
 
 Risks, highest first:
 1. The Travel list may reject a row that has no MSB bonfire behind it. Fallback: a "Pocket Bonfire" entry in the bonfire menu instead, the way Bonfire Level Up swaps out an entry.
-2. **Choosing the host.** The host has to be in the map you're standing in, or the arrival drops the player through the world. We don't yet know where the game keeps the current map. LastBonfire isn't it: a kind 4 transition takes you into another map without changing it. Candidates are recorded above. Fallback: a table of map bounds.
+2. **Choosing the host.** The host has to be in the map you're standing in, or the arrival drops the player through the world. `Addresses::current_map` now gives that map, so the open part is a map with no lit bonfire. Fallback: refuse placement there.
 3. Moving the player right after a load may land before the ground has loaded at the target. The probe's Ctrl+F7 test watches for this.
 4. Steam patches. Everything is resolved by AOB, and the DLL switches itself off when the exe isn't the known version (module size `0x1D76000`).
 
