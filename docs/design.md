@@ -1,5 +1,27 @@
 # Pocket Bonfire: design
 
+## Status (0.10.0)
+
+Released: placing, resting and respawning. Not built: Travel to it, the placement limits and a visible
+marker, so the decisions below are partly still plans. Where the sections below describe loose params,
+Mod Engine or text files, the release differs:
+
+- **Item:** `keep_item_row` points the game at a copy of ItemParam with the row added: the pointer is at
+  `*(*(BaseA+0xa8)+0x20)+0xd8`. Clearing the "owned" byte at `+0xe8` stops the game's allocator asserting on
+  the copy when the game closes.
+- **Text:** `FmgLookup` (`+0x503410`) is hooked for the item's id. The text manager global is `+0x1616cb0`,
+  and categories 8, 9 and 10 (ItemName, SimpleExplanation, DetailedExplanation) are at `+0x2d8`, `+0x2f8` and
+  `+0x318`. Text a file really has wins.
+- **Offline:** `WSAStartup` is refused from `DllMain`, the approach Mod Engine uses.
+- **Title flow:** states are numbered, with `FeSubState*` classes. `FeSubStateTitleInitBranch` (`+0xfd930`) goes to
+  the title instead of the warning and logos if the byte it reads is set. `FeSubStateTitleSteamNetworkCheck`
+  (state 0x20, `+0xf8fb0`) is forced to "not connected", whose target changes from the dialogs (0x24, then
+  0x2a) to the title menu (0x47). `FeSubStateTitleOnlineCheck` exists too, and hasn't caused a wait in play.
+- **Packaging:** one zip with the DLL and Lazy Loader, and no `lazyLoad.ini`: Lazy Loader works without one.
+
+A crash when the game closes, at `+0xa5b3d6`, predates this mod (seen from 2026-10-20) and has no mod DLL on
+its stack. It happens after quitting and its cause is unknown.
+
 ## Decisions (2026-10-27)
 
 | Question | Decision |
