@@ -14,15 +14,44 @@ pub const EXPECTED_TIMESTAMP: u32 = 0x6322_EF1D;
 
 /// `mov rax, [rip+disp32]` loading the GameManagerImp ("BaseA") global.
 pub const AOB_BASE_A: &str = "48 8B 05 ? ? ? ? 48 8B 58 38 48 85 DB 74 ? F6";
-/// `SetWarpTarget(out_struct*, u16 bonfire_id, i32 mode)`: returns the struct. Mode 2 is the
-/// default; writing 3 to `[struct]` afterwards means "warp to that bonfire".
+/// `SetWarpTarget(out_struct*, u16 bonfire_id, i32 mode)`: returns the struct. The game passes mode 2.
+///
+/// Warp struct, as logged from real Travel warps: +00 kind (3 = bonfire), +04 and +30 mode,
+/// +08 map id as 0xAABBCCDD = mAA_BB_CC_DD, +18 bonfire id. There are no coordinates in it: the game
+/// resolves the destination from map data, so a warp can only go to a real bonfire.
 pub const AOB_SET_WARP_TARGET: &str = "48 89 5C 24 08 48 89 74 24 20 57 48 83 EC 60 0F B7 FA";
-/// `WarpFunc(warp_manager*, warp_struct*)`, where `warp_manager` is `EventManager + 0x70` (not dereferenced).
+/// `WarpFunc(warp_manager*, warp_struct*)`, where `warp_manager` is `*(EventManager + 0x70)`.
 pub const AOB_WARP_FUNC: &str = "40 53 48 83 EC 60 8B 02 48 8B D9 89 01 8B 42 04";
+/// `ApplySpEffect(sp_effect_ctrl*, effect_struct*, _, _, _, f32 = -1.0)` (DS2S-META, S103 entry).
+pub const AOB_APPLY_SP_EFFECT: &str = "48 89 6C 24 F8 48 8D 64 24 F8 48 8D 2D 33 A7 0A 00";
+/// `(*(EventManager + 0x58), u32 bonfire_id)`: Bob's table calls it "Rest at Bonfire" (+0x17DC40 on
+/// 1.03). What it does with no bonfire nearby is what the probe is here to find out.
+pub const AOB_REST_AT_BONFIRE: &str = "40 53 48 83 EC 20 83 79 38 00 48 8B D9 75 39 85 D2 74 35 48 83 79 30 00 75 2E E8";
+
+/// Every signature the mod depends on, for `resolve` and the offline scanner.
+pub const SIGNATURES: [(&str, &str); 5] = [
+    ("BaseA", AOB_BASE_A),
+    ("SetWarpTarget", AOB_SET_WARP_TARGET),
+    ("WarpFunc", AOB_WARP_FUNC),
+    ("ApplySpEffect", AOB_APPLY_SP_EFFECT),
+    ("RestAtBonfire", AOB_REST_AT_BONFIRE),
+];
+
+/// DS2S-META's `SPECIAL_EFFECT.BONFIREREST`: refills HP and estus without touching enemies.
+pub const SP_EFFECT_BONFIRE_REST: i32 = 110_000_010;
 
 /// BaseA children.
 pub const OFF_PLAYER_CTRL: usize = 0xd0;
 pub const OFF_EVENT_MANAGER: usize = 0x70;
+/// EventManager children.
+pub const OFF_WARP_MANAGER: usize = 0x70;
+pub const OFF_BONFIRE_MANAGER: usize = 0x58;
+/// PlayerCtrl child.
+pub const OFF_SP_EFFECT_CTRL: usize = 0x3e0;
+/// `game_state` while the player is in control.
+pub const GAME_STATE_PLAYABLE: u32 = 30;
+/// Within PlayerDataMap: three copies of y, z, x, 0x10 apart. Writing all three moves the player.
+pub const OFF_STABLE_POS: [usize; 3] = [0x1a0, 0x1b0, 0x1c0];
 /// PlayerCtrl -> 0xf8 -> 0xf0 is the position block.
 pub const CHAIN_POSITION: [usize; 2] = [0xf8, 0xf0];
 /// PlayerCtrl -> 0x100 -> 0x320 -> 0x20: holds the three "stable" warp positions at 0x1a0..0x1c8.
@@ -43,6 +72,8 @@ pub struct Addresses {
     pub base_a_global: usize,
     pub set_warp_target: usize,
     pub warp_func: usize,
+    pub apply_sp_effect: usize,
+    pub rest_at_bonfire: usize,
 }
 
 #[derive(Debug)]
@@ -79,6 +110,8 @@ pub fn resolve() -> Result<Addresses, ResolveError> {
         base_a_global: rip_relative(base_hit, 3, 7).ok_or(ResolveError::Pattern { name: "BaseA", hits: 0 })?,
         set_warp_target: find("SetWarpTarget", AOB_SET_WARP_TARGET)?,
         warp_func: find("WarpFunc", AOB_WARP_FUNC)?,
+        apply_sp_effect: find("ApplySpEffect", AOB_APPLY_SP_EFFECT)?,
+        rest_at_bonfire: find("RestAtBonfire", AOB_REST_AT_BONFIRE)?,
     })
 }
 
@@ -105,6 +138,76 @@ impl Addresses {
     }
     pub fn player_data_map(&self) -> Option<usize> {
         mem::chain(self.player_ctrl()?, &CHAIN_PLAYER_DATA_MAP)
+    }
+
+    pub fn warp_manager(&self) -> Option<usize> {
+        mem::ptr(self.event_manager()? + OFF_WARP_MANAGER)
+    }
+
+    /// True when the player is in control and nothing is loading.
+    pub fn playable(&self) -> bool {
+        let s = self.snapshot();
+        s.game_state == Some(GAME_STATE_PLAYABLE) && s.loading == Some(0) && s.pos.is_some()
+    }
+
+    /// Moves the player within the loaded map by writing the three "stable" position copies.
+    /// `pos` is y, z, x, the same order as `Snapshot::pos`.
+    pub fn set_position(&self, pos: [f32; 3]) -> bool {
+        let Some(map) = self.player_data_map() else { return false };
+        OFF_STABLE_POS.iter().all(|off| mem::write(map + off, pos))
+    }
+
+    /// Warps to a lit bonfire, the way the Travel menu does: the same two calls with the same mode.
+    ///
+    /// # Safety
+    /// Calls into the game. `manager` must be the live warp manager, and the player must be in control.
+    pub unsafe fn warp_to_bonfire(&self, manager: usize, bonfire_id: u16) {
+        #[repr(align(16))]
+        struct WarpStruct([u8; 0x200]);
+        type SetTarget = unsafe extern "system" fn(*mut u8, u64, u64, u64) -> *mut u8;
+        type Warp = unsafe extern "system" fn(usize, *mut u8) -> u64;
+
+        let mut warp = WarpStruct([0; 0x200]);
+        let set_target: SetTarget = std::mem::transmute(self.set_warp_target);
+        let do_warp: Warp = std::mem::transmute(self.warp_func);
+        let filled = set_target(warp.0.as_mut_ptr(), bonfire_id as u64, 2, 0);
+        // Kind 3 = "warp to the bonfire"; anything else lands at the area's default start.
+        *(filled as *mut u32) = 3;
+        do_warp(manager, filled);
+    }
+
+    /// Applies a SpEffect to the player. Returns false if the player isn't available.
+    ///
+    /// # Safety
+    /// Calls into the game. The player must be in control.
+    pub unsafe fn apply_sp_effect(&self, id: i32) -> bool {
+        #[repr(C, align(16))]
+        struct Effect {
+            id: i32,
+            one: i32,
+            _pad: i32,
+            flags: i32,
+            _rest: [u8; 0x10],
+        }
+        type Apply = unsafe extern "system" fn(usize, *const Effect, u64, u64, u64, f32) -> u64;
+
+        let Some(ctrl) = self.player_ctrl().and_then(|pc| mem::ptr(pc + OFF_SP_EFFECT_CTRL)) else { return false };
+        let effect = Effect { id, one: 1, _pad: 0, flags: 0x219, _rest: [0; 0x10] };
+        let apply: Apply = std::mem::transmute(self.apply_sp_effect);
+        apply(ctrl, &effect, 0, 0, 0, -1.0);
+        true
+    }
+
+    /// Bob's table's remote "Rest at Bonfire" call. Returns false if the manager isn't available.
+    ///
+    /// # Safety
+    /// Calls into the game. The player must be in control.
+    pub unsafe fn rest_at_bonfire(&self, bonfire_id: u16) -> bool {
+        type Rest = unsafe extern "system" fn(usize, u32) -> u64;
+        let Some(manager) = self.event_manager().and_then(|em| mem::ptr(em + OFF_BONFIRE_MANAGER)) else { return false };
+        let rest: Rest = std::mem::transmute(self.rest_at_bonfire);
+        rest(manager, bonfire_id as u32);
+        true
     }
 
     pub fn snapshot(&self) -> Snapshot {

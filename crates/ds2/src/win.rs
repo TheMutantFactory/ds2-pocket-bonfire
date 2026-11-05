@@ -37,5 +37,12 @@ extern "system" {
         size: usize,
         read: *mut usize,
     ) -> i32;
+    pub fn WriteProcessMemory(
+        process: Handle,
+        base: *mut c_void,
+        buf: *const c_void,
+        size: usize,
+        written: *mut usize,
+    ) -> i32;
     pub fn VirtualQuery(addr: *const c_void, info: *mut MemoryBasicInformation, len: usize) -> usize;
 }

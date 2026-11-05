@@ -24,6 +24,24 @@ pub fn read<T: Copy>(addr: usize) -> Option<T> {
     (ok != 0 && n == size_of::<T>()).then(|| unsafe { out.assume_init() })
 }
 
+/// Writes a `T` at `addr`, returning whether it worked. A bad pointer fails instead of faulting.
+pub fn write<T: Copy>(addr: usize, value: T) -> bool {
+    if addr < 0x10000 {
+        return false;
+    }
+    let mut n = 0usize;
+    let ok = unsafe {
+        win::WriteProcessMemory(
+            win::GetCurrentProcess(),
+            addr as *mut c_void,
+            (&value as *const T).cast(),
+            size_of::<T>(),
+            &mut n,
+        )
+    };
+    ok != 0 && n == size_of::<T>()
+}
+
 /// Reads `len` bytes at `addr`.
 pub fn read_bytes(addr: usize, len: usize) -> Option<Vec<u8>> {
     if addr < 0x10000 {

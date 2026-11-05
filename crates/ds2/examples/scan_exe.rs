@@ -18,11 +18,7 @@ fn main() {
     );
 
     let mut ok = true;
-    for (name, aob) in [
-        ("BaseA", game::AOB_BASE_A),
-        ("SetWarpTarget", game::AOB_SET_WARP_TARGET),
-        ("WarpFunc", game::AOB_WARP_FUNC),
-    ] {
+    for (name, aob) in game::SIGNATURES {
         let hits = Pattern::parse(aob).find_in(&file);
         let rvas: Vec<String> = hits
             .iter()
