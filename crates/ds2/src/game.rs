@@ -42,7 +42,7 @@ pub const SIGNATURES: [(&str, &str); 6] = [
 ];
 
 /// DS2S-META's `SPECIAL_EFFECT.BONFIREREST`: refills HP and estus without touching enemies. The game
-/// itself applies this when the player rests at a real bonfire.
+/// itself applies this during a death respawn, so seeing it doesn't mean the player rested.
 pub const SP_EFFECT_BONFIRE_REST: i32 = 110_000_010;
 
 /// The item's row in ItemParam. Using an item applies its Effect ID through `ApplySpEffect` after the

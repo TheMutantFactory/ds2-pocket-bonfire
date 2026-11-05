@@ -11,7 +11,7 @@
 
 mod state;
 
-use ds2::game::{self, Addresses, Snapshot, GAME_STATE_PLAYABLE, POCKET_BONFIRE_ITEM, SP_EFFECT_BONFIRE_REST};
+use ds2::game::{self, Addresses, Snapshot, GAME_STATE_PLAYABLE, POCKET_BONFIRE_ITEM};
 use ds2::log;
 use minhook::MinHook;
 use state::{Bonfire, Store};
@@ -34,7 +34,6 @@ static ORIG_WARP_FUNC: AtomicUsize = AtomicUsize::new(0);
 
 /// The hooks only raise these; the game's threads never run the mod's logic.
 static ITEM_USED: AtomicBool = AtomicBool::new(false);
-static REST_EFFECT_SEEN: AtomicBool = AtomicBool::new(false);
 static WARP_SEEN: AtomicBool = AtomicBool::new(false);
 
 #[link(name = "kernel32")]
@@ -102,7 +101,7 @@ type WarpFuncFn = unsafe extern "system" fn(*mut u8, *mut u8) -> u64;
 
 /// `ApplySpEffect(ctrl, effect_struct, ...)`. The full argument list isn't known, so the stack slots
 /// pass through raw. Enemies use this too, so the effect id is checked first, and the pointer reads
-/// behind the player check only happen for ids the mod cares about.
+/// behind the player check only happen for the item's id.
 unsafe extern "system" fn apply_sp_effect_detour(
     ctrl: usize,
     effect: *const u8,
@@ -116,13 +115,8 @@ unsafe extern "system" fn apply_sp_effect_detour(
     let orig: ApplySpEffectFn = std::mem::transmute(ORIG_APPLY_SP_EFFECT.load(Ordering::SeqCst));
     let ret = orig(ctrl, effect, r8, r9, s5, s6, s7, s8);
     let id = ds2::mem::read::<i32>(effect as usize).unwrap_or(0);
-    if id == POCKET_BONFIRE_ITEM as i32 || id == SP_EFFECT_BONFIRE_REST {
-        let on_player = ADDRS.get().and_then(|a| a.sp_effect_ctrl()) == Some(ctrl);
-        if on_player && id == POCKET_BONFIRE_ITEM as i32 {
-            ITEM_USED.store(true, Ordering::SeqCst);
-        } else if on_player {
-            REST_EFFECT_SEEN.store(true, Ordering::SeqCst);
-        }
+    if id == POCKET_BONFIRE_ITEM as i32 && ADDRS.get().and_then(|a| a.sp_effect_ctrl()) == Some(ctrl) {
+        ITEM_USED.store(true, Ordering::SeqCst);
     }
     ret
 }
@@ -192,19 +186,24 @@ impl Mod {
         }
     }
 
-    /// A rest the mod didn't open means the player sat at a real bonfire, and that's where they respawn
-    /// now, so the pocket bonfire stops being the respawn point (even if that real bonfire is its host).
+    /// A rest menu the mod didn't open means the player sat at a real bonfire, and that's where they
+    /// respawn now, so the pocket bonfire stops being the respawn point. This matters most for its own
+    /// host, where LastBonfire can't show the difference. The rest effect can't be used for this:
+    /// the game also applies it during a death respawn.
     fn watch_rests(&mut self, addrs: &Addresses) {
-        if self.our_rest_open && !addrs.rest_menu_open() {
-            self.our_rest_open = false;
+        let open = addrs.rest_menu_open();
+        if self.our_rest_open {
+            self.our_rest_open = open;
+        } else if open {
+            self.stop_respawning_here("rested at a real bonfire");
         }
-        if REST_EFFECT_SEEN.swap(false, Ordering::SeqCst) && !self.our_rest_open {
-            if let Some(bonfire) = self.bonfire.as_mut().filter(|b| b.respawn_here) {
-                bonfire.respawn_here = false;
-                let saved = *bonfire;
-                self.save(saved);
-                log::line("rested at a real bonfire, no longer the respawn point".into());
-            }
+    }
+
+    fn stop_respawning_here(&mut self, why: &str) {
+        if let Some(mut bonfire) = self.bonfire.filter(|b| b.respawn_here) {
+            bonfire.respawn_here = false;
+            self.save(bonfire);
+            log::line(format!("{why}, no longer the respawn point"));
         }
     }
 
@@ -279,6 +278,7 @@ impl Mod {
                     bonfire.host,
                     bonfire.map
                 ));
+                self.stop_respawning_here("respawned elsewhere");
             }
         } else if since.elapsed() > ARRIVE_TIMEOUT {
             log::line("respawn move dropped, load took too long".into());

@@ -85,7 +85,7 @@ Tested in play (probe 0.5, one session):
 Tested in play (probe 0.6, one session):
 - **Item use shows up in `ApplySpEffect`.** Using a test item applied `150000000` (the use starting, presumably), then about 2.75 s later the item's own Effect ID. Each test item did this, and the game returned 0 with no other effect. The feather's usage (2210) didn't warp, so the warp isn't tied to the usage.
 - **State `0x0d` means not consumed.** One copy of `60355010` was used twice.
-- **The game's own rest applies `110000010`,** which tells a real rest from the mod's.
+- **The game applies `110000010` during a death respawn.** So it can't tell a real rest from anything else. The first mod build assumed it could, and each death switched off the respawn point. A real rest is now recognised by the rest menu's flag (the bonfire manager's +0x38) being set when the mod didn't open it, assuming real bonfires use the same call.
 - F3 toggled a first-person view: `dxgi.dll` (DS2 Lighting Engine) contains "free camera", so it's almost certainly that, not the mod. The F6 parry may be Lighting Engine too (not confirmed).
 
 Still unproven:
