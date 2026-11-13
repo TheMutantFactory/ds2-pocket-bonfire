@@ -58,7 +58,7 @@ pub extern "system" fn DllMain(_module: *mut c_void, reason: u32, _reserved: *mu
 
 fn run() {
     log::init(DllMain as *const () as usize, "pocket_bonfire_probe.log");
-    let addrs = match game::resolve() {
+    let addrs = match game::game_module().and_then(|m| game::resolve(&m)) {
         Ok(a) => a,
         Err(e) => {
             log::line(format!("probe disabled: {e}"));
