@@ -4,7 +4,7 @@
 //! DS2S-META way: each offset is added and then dereferenced.
 
 use crate::module::{self, Module};
-use crate::scan::{rip_relative, Pattern};
+use crate::scan::{self, find_function, rip_relative, Pattern};
 use crate::mem;
 
 /// `SizeOfImage` of the only exe we support. Anything else and the mod switches itself off.
@@ -19,17 +19,17 @@ pub const AOB_BASE_A: &str = "48 8B 05 ? ? ? ? 48 8B 58 38 48 85 DB 74 ? F6";
 /// Warp struct, as logged from real Travel warps: +00 kind (3 = bonfire), +04 and +30 mode,
 /// +08 map id as 0xAABBCCDD = mAA_BB_CC_DD, +18 bonfire id. There are no coordinates in it: the game
 /// resolves the destination from map data, so a warp can only go to a real bonfire.
-pub const AOB_SET_WARP_TARGET: &str = "48 89 5C 24 08 48 89 74 24 20 57 48 83 EC 60 0F B7 FA";
+pub const AOB_SET_WARP_TARGET: &str = "48 89 5C 24 08 48 89 74 24 20 57 48 83 EC 60 0F B7 FA 48 8B F1 48";
 /// `WarpFunc(warp_manager*, warp_struct*)`, where `warp_manager` is `*(EventManager + 0x70)`.
-pub const AOB_WARP_FUNC: &str = "40 53 48 83 EC 60 8B 02 48 8B D9 89 01 8B 42 04";
+pub const AOB_WARP_FUNC: &str = "40 53 48 83 EC 60 8B 02 48 8B D9 89 01 8B 42 04 89 41 04 8B 42 08 89 41 08 8B 42 0C 89 41 0C 8B 42 10 89 41 10 8B 42 14 89 41 14 8B 42 18 89 41 18 8B 42 1C 89 41 1C 8B 42 20 89 41 20 8B 42 24 89 41 24 8B 42 28 89 41 28 8B 42 2C 89 41 2C 8B 42 30 89 41 30 8B 42 34 89 41 34 8B 42 38 89 41 38 8B 42 3C 89 41 3C 48 8B 05";
 /// `ApplySpEffect(sp_effect_ctrl*, effect_struct*, _, _, _, f32 = -1.0)` (DS2S-META, S103 entry).
-pub const AOB_APPLY_SP_EFFECT: &str = "48 89 6C 24 F8 48 8D 64 24 F8 48 8D 2D 33 A7 0A 00";
+pub const AOB_APPLY_SP_EFFECT: &str = "48 89 6C 24 F8 48 8D 64 24 F8 48 8D 2D 33 A7 0A 00 48 87 2C 24 48";
 /// `(*(EventManager + 0x58), u32 bonfire_id)`: Bob's table calls it "Rest at Bonfire" (+0x17DC40 on
 /// 1.03). What it does with no bonfire nearby is what the probe is here to find out.
 pub const AOB_REST_AT_BONFIRE: &str = "40 53 48 83 EC 20 83 79 38 00 48 8B D9 75 39 85 D2 74 35 48 83 79 30 00 75 2E E8";
 
 /// `ItemGive(item_bag*, item_structs*, u32 count, 0)`, adding items with no on-screen window.
-pub const AOB_ITEM_GIVE: &str = "48 89 5C 24 18 56 57 41 56 48 83 EC 30 45 8B F1 41";
+pub const AOB_ITEM_GIVE: &str = "48 89 5C 24 18 56 57 41 56 48 83 EC 30 45 8B F1 41 8B F0 48 8B DA 48";
 
 /// `FmgLookup(fmg*, u32 id) -> *const u16`: finds a string in a loaded text file, null if it has none.
 /// Every piece of item text the menus show goes through it.
@@ -40,7 +40,7 @@ pub const AOB_TEXT_MANAGER: &str = "48 8B 35 ? ? ? ? 8B EA 4C 63 F1 48 85 F6";
 
 /// The title flow's first state, `FeSubStateTitleInitBranch`: a byte saying the opening has been shown
 /// sends it to the title (state 0x17) instead of the warning and logos, as when returning from a game.
-pub const AOB_TITLE_INIT_BRANCH: &str = "33 C0 38 05 ? ? ? ? C6 05 ? ? ? ? 01 0F 95 C0 89 41 10";
+pub const AOB_TITLE_INIT_BRANCH: &str = "33 C0 38 05 ? ? ? ? C6 05 ? ? ? ? 01 0F 95 C0 89 41 10 48";
 /// `FeSubStateTitleSteamNetworkCheck`'s enter function, which picks the next state through `+0x10`: 1
 /// is the online login, 2 is "not connected to Steam", 3 is a frame rate failure.
 pub const AOB_TITLE_NETWORK_CHECK: &str = "48 89 5C 24 08 57 48 83 EC 20 48 8B 05 ? ? ? ? 48 8B D9 48 8B B8 F0 22 00 00";
@@ -53,19 +53,28 @@ pub const OFF_NETWORK_CHECK_RESULT: usize = 0x10;
 /// The title menu. The game's offline route goes through two dialogs and then here.
 pub const TITLE_STATE_TOP_MENU: u32 = 0x47;
 
+/// A signature, and where the 1.03 exe has it, for the log when it can't be found.
+pub struct Signature {
+    pub name: &'static str,
+    pub aob: &'static str,
+    pub rva: usize,
+    /// It starts at a function's first byte, where another mod's hook would land.
+    pub start: bool,
+}
+
 /// Every signature the mod depends on, for `resolve` and the offline scanner.
-pub const SIGNATURES: [(&str, &str); 11] = [
-    ("TitleInitBranch", AOB_TITLE_INIT_BRANCH),
-    ("TitleNetworkCheck", AOB_TITLE_NETWORK_CHECK),
-    ("TitleNotConnectedTarget", AOB_TITLE_NOT_CONNECTED_TARGET),
-    ("FmgLookup", AOB_FMG_LOOKUP),
-    ("TextManager", AOB_TEXT_MANAGER),
-    ("BaseA", AOB_BASE_A),
-    ("SetWarpTarget", AOB_SET_WARP_TARGET),
-    ("WarpFunc", AOB_WARP_FUNC),
-    ("ApplySpEffect", AOB_APPLY_SP_EFFECT),
-    ("RestAtBonfire", AOB_REST_AT_BONFIRE),
-    ("ItemGive", AOB_ITEM_GIVE),
+pub const SIGNATURES: [Signature; 11] = [
+    Signature { name: "TitleInitBranch", aob: AOB_TITLE_INIT_BRANCH, rva: 0xfd930, start: true },
+    Signature { name: "TitleNetworkCheck", aob: AOB_TITLE_NETWORK_CHECK, rva: 0xf8fb0, start: true },
+    Signature { name: "TitleNotConnectedTarget", aob: AOB_TITLE_NOT_CONNECTED_TARGET, rva: 0xf9470, start: false },
+    Signature { name: "FmgLookup", aob: AOB_FMG_LOOKUP, rva: 0x503410, start: true },
+    Signature { name: "TextManager", aob: AOB_TEXT_MANAGER, rva: 0x503630, start: false },
+    Signature { name: "BaseA", aob: AOB_BASE_A, rva: 0x3f5219, start: false },
+    Signature { name: "SetWarpTarget", aob: AOB_SET_WARP_TARGET, rva: 0x1843b0, start: true },
+    Signature { name: "WarpFunc", aob: AOB_WARP_FUNC, rva: 0x184830, start: true },
+    Signature { name: "ApplySpEffect", aob: AOB_APPLY_SP_EFFECT, rva: 0x1b3cbe1, start: true },
+    Signature { name: "RestAtBonfire", aob: AOB_REST_AT_BONFIRE, rva: 0x17dc40, start: true },
+    Signature { name: "ItemGive", aob: AOB_ITEM_GIVE, rva: 0x1a7470, start: true },
 ];
 
 /// DS2S-META's `SPECIAL_EFFECT.BONFIREREST`: refills HP and estus without touching enemies. The game
@@ -95,6 +104,9 @@ pub const OFF_BONFIRE_MANAGER: usize = 0x58;
 pub const OFF_REST_MENU_ACTIVE: usize = 0x38;
 /// PlayerCtrl child.
 pub const OFF_SP_EFFECT_CTRL: usize = 0x3e0;
+/// HP and maximum HP, directly in PlayerCtrl (DS2S-META `HP`, `HPMax`).
+pub const OFF_HP: usize = 0x168;
+pub const OFF_HP_MAX: usize = 0x170;
 /// BaseA child, and the character name within it (DS2S-META `PlayerName`).
 pub const OFF_PLAYER_MISC: usize = 0xa8;
 pub const OFF_PLAYER_NAME: usize = 0x114;
@@ -141,6 +153,12 @@ pub struct Addresses {
     pub fmg_lookup: usize,
     /// Address of the text manager global (dereference it to get the manager).
     pub text_manager_global: usize,
+}
+
+/// The quick start's addresses, found separately so it can work when the item's can't, and the
+/// other way round.
+#[derive(Debug, Clone, Copy)]
+pub struct QuickStart {
     pub title_init_branch: usize,
     /// The byte saying the opening has been shown.
     pub opening_shown: usize,
@@ -160,7 +178,9 @@ pub enum ItemText {
 pub enum ResolveError {
     NoModule,
     WrongVersion { size: usize, timestamp: u32 },
-    Pattern { name: &'static str, hits: usize },
+    /// A signature didn't match once. `detail` says what's at its usual place, and if another mod's
+    /// hook is there, which DLL it leads to.
+    Pattern { name: &'static str, hits: usize, detail: String },
 }
 
 impl std::fmt::Display for ResolveError {
@@ -171,37 +191,57 @@ impl std::fmt::Display for ResolveError {
                 f,
                 "unsupported DarkSoulsII.exe (SizeOfImage {size:#x}, timestamp {timestamp:#x}); expected {EXPECTED_IMAGE_SIZE:#x} (Steam 1.03)"
             ),
-            ResolveError::Pattern { name, hits } => write!(f, "signature {name} matched {hits} times, expected 1"),
+            ResolveError::Pattern { name, hits, detail } => {
+                write!(f, "signature {name} matched {hits} times, expected 1 ({detail})")
+            }
         }
     }
 }
 
-pub fn resolve() -> Result<Addresses, ResolveError> {
+/// The game's exe, if it's the version the mod supports.
+pub fn game_module() -> Result<Module, ResolveError> {
     let module = module::main_module().ok_or(ResolveError::NoModule)?;
     if module.size != EXPECTED_IMAGE_SIZE {
         return Err(ResolveError::WrongVersion { size: module.size, timestamp: module.timestamp });
     }
-    let find = |name: &'static str, aob: &str| {
-        Pattern::parse(aob).find_unique(&module).map_err(|hits| ResolveError::Pattern { name, hits })
-    };
-    let base_hit = find("BaseA", AOB_BASE_A)?;
-    let title_init_branch = find("TitleInitBranch", AOB_TITLE_INIT_BRANCH)?;
+    Ok(module)
+}
+
+/// Finds one signature: as a function start, tolerating another mod's hook there, or inside a
+/// function, exactly. A failure explains what's at the usual place.
+fn find(module: &Module, name: &'static str) -> Result<usize, ResolveError> {
+    let sig = SIGNATURES.iter().find(|s| s.name == name).expect("known signature");
+    let found = if sig.start { find_function(module, sig.aob) } else { Pattern::parse(sig.aob).find_unique(module) };
+    found.map_err(|hits| ResolveError::Pattern { name, hits, detail: scan::describe(module, sig.rva) })
+}
+
+fn target(name: &'static str, hit: usize, disp: usize, len: usize) -> Result<usize, ResolveError> {
+    rip_relative(hit, disp, len).ok_or(ResolveError::Pattern { name, hits: 0, detail: "unreadable operand".into() })
+}
+
+pub fn resolve(module: &Module) -> Result<Addresses, ResolveError> {
+    let module = *module;
     Ok(Addresses {
         module,
-        base_a_global: rip_relative(base_hit, 3, 7).ok_or(ResolveError::Pattern { name: "BaseA", hits: 0 })?,
-        set_warp_target: find("SetWarpTarget", AOB_SET_WARP_TARGET)?,
-        warp_func: find("WarpFunc", AOB_WARP_FUNC)?,
-        apply_sp_effect: find("ApplySpEffect", AOB_APPLY_SP_EFFECT)?,
-        rest_at_bonfire: find("RestAtBonfire", AOB_REST_AT_BONFIRE)?,
-        item_give: find("ItemGive", AOB_ITEM_GIVE)?,
-        fmg_lookup: find("FmgLookup", AOB_FMG_LOOKUP)?,
-        text_manager_global: rip_relative(find("TextManager", AOB_TEXT_MANAGER)?, 3, 7)
-            .ok_or(ResolveError::Pattern { name: "TextManager", hits: 0 })?,
+        base_a_global: target("BaseA", find(&module, "BaseA")?, 3, 7)?,
+        set_warp_target: find(&module, "SetWarpTarget")?,
+        warp_func: find(&module, "WarpFunc")?,
+        apply_sp_effect: find(&module, "ApplySpEffect")?,
+        rest_at_bonfire: find(&module, "RestAtBonfire")?,
+        item_give: find(&module, "ItemGive")?,
+        fmg_lookup: find(&module, "FmgLookup")?,
+        text_manager_global: target("TextManager", find(&module, "TextManager")?, 3, 7)?,
+    })
+}
+
+pub fn resolve_quick_start(module: &Module) -> Result<QuickStart, ResolveError> {
+    let title_init_branch = find(module, "TitleInitBranch")?;
+    Ok(QuickStart {
         title_init_branch,
-        opening_shown: rip_relative(title_init_branch, 4, 8)
-            .ok_or(ResolveError::Pattern { name: "TitleInitBranch", hits: 0 })?,
-        title_network_check: find("TitleNetworkCheck", AOB_TITLE_NETWORK_CHECK)?,
-        title_not_connected_target: find("TitleNotConnectedTarget", AOB_TITLE_NOT_CONNECTED_TARGET)? + 3,
+        // From the `mov byte [rip+x], 1` at +8 rather than the read at +2, which a hook would cover.
+        opening_shown: target("TitleInitBranch", title_init_branch + 8, 2, 7)?,
+        title_network_check: find(module, "TitleNetworkCheck")?,
+        title_not_connected_target: find(module, "TitleNotConnectedTarget")? + 3,
     })
 }
 
@@ -339,6 +379,41 @@ impl Addresses {
         let units: Vec<u16> =
             bytes.as_chunks::<2>().0.iter().map(|b| u16::from_le_bytes(*b)).take_while(|&u| u != 0).collect();
         (!units.is_empty()).then_some(units)
+    }
+
+    /// The player's current and maximum HP, if they look like HP: a maximum between 1 and 99999 and
+    /// a current value no higher than it.
+    pub fn hp(&self) -> Option<(i32, i32)> {
+        let pc = self.player_ctrl()?;
+        let (hp, max) = (mem::read::<i32>(pc + OFF_HP)?, mem::read::<i32>(pc + OFF_HP_MAX)?);
+        ((1..100_000).contains(&max) && (0..=max).contains(&hp)).then_some((hp, max))
+    }
+
+    /// Sets the player's HP. Zero kills them, which the regression tests use to check respawning.
+    /// Refuses unless `hp()` reads sensible values, so a wrong offset can't overwrite something else.
+    pub fn set_hp(&self, hp: i32) -> bool {
+        self.hp().is_some() && self.player_ctrl().is_some_and(|pc| mem::write(pc + OFF_HP, hp))
+    }
+
+    /// The text the game shows for an item string, read through its own lookup, hooks included.
+    ///
+    /// # Safety
+    /// Calls into the game: run it on the main thread.
+    pub unsafe fn item_text(&self, kind: ItemText, id: u32) -> Option<String> {
+        type Lookup = unsafe extern "system" fn(usize, u32) -> *const u16;
+        let off = match kind {
+            ItemText::Name => OFF_TEXT_ITEM_NAME,
+            ItemText::Simple => OFF_TEXT_SIMPLE,
+            ItemText::Detailed => OFF_TEXT_DETAILED,
+        };
+        let fmg = mem::ptr(mem::ptr(self.text_manager_global)? + off)?;
+        let lookup: Lookup = std::mem::transmute(self.fmg_lookup);
+        let text = lookup(fmg, id);
+        if text.is_null() {
+            return None;
+        }
+        let len = (0..4096).take_while(|&i| *text.add(i) != 0).count();
+        Some(String::from_utf16_lossy(std::slice::from_raw_parts(text, len)))
     }
 
     /// Whether a rest menu opened by `rest_at_bonfire` is still open.

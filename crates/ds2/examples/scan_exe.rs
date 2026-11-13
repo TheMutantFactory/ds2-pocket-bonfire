@@ -1,48 +1,143 @@
-//! Offline signature check: scans a DarkSoulsII.exe on disk for every signature the mod uses and
-//! prints the hit count and RVA of each. Run it after a Steam patch before trusting the DLL.
+//! Offline signature check, run by the regression tests and after any Steam patch: scans a
+//! DarkSoulsII.exe on disk for every signature the mod uses. Each must match once, at the address the
+//! mod expects, and every function signature must still match once after another mod's hook has
+//! overwritten the function's first bytes, both as a 5-byte and a 14-byte jump.
 //!
-//! cargo run -p ds2 --example scan_exe -- "C:\...\Game\DarkSoulsII.exe"
+//! With `--damaged`, it checks what a changed exe does instead: it lays the exe out in memory as the
+//! game would, then breaks each signature in turn. Only the feature using that signature may fail,
+//! and its error has to name it, so a player's log points at the cause and the other features keep
+//! working.
+//!
+//! cargo run -p ds2 --example scan_exe -- "C:\...\Game\DarkSoulsII.exe" [--damaged]
 
-use ds2::game;
-use ds2::scan::Pattern;
+use ds2::game::{self, ResolveError};
+use ds2::module::Module;
+use ds2::scan::{Pattern, HOOK_BYTES};
 
 fn main() {
-    let path = std::env::args().nth(1).expect("usage: scan_exe <path to DarkSoulsII.exe>");
+    let path = std::env::args().nth(1).expect("usage: scan_exe <path to DarkSoulsII.exe> [--damaged]");
     let file = std::fs::read(&path).expect("read exe");
     let pe = u32::from_le_bytes(file[0x3c..0x40].try_into().unwrap()) as usize;
     let size_of_image = u32::from_le_bytes(file[pe + 24 + 56..pe + 24 + 60].try_into().unwrap()) as usize;
     let sections = sections(&file, pe);
-    println!(
-        "{path}\n  SizeOfImage {size_of_image:#x} ({})",
-        if size_of_image == game::EXPECTED_IMAGE_SIZE { "supported" } else { "NOT the supported version" }
-    );
+    if std::env::args().any(|a| a == "--damaged") {
+        damaged(&file, pe, size_of_image, &sections);
+    }
+    let supported = size_of_image == game::EXPECTED_IMAGE_SIZE;
+    println!("{path}\n  SizeOfImage {size_of_image:#x} ({})", if supported { "supported" } else { "NOT the supported version" });
 
-    let mut ok = true;
-    for (name, aob) in game::SIGNATURES {
-        let hits = Pattern::parse(aob).find_in(&file);
-        let rvas: Vec<String> = hits
-            .iter()
-            .map(|&off| match to_rva(&sections, off) {
-                Some((rva, sec)) => format!("+{rva:#x} ({sec})"),
-                None => format!("file {off:#x} (no section)"),
-            })
-            .collect();
-        ok &= hits.len() == 1;
-        println!("  {name:<14} {} hit(s) {}", hits.len(), rvas.join(", "));
-        if name == "BaseA" {
-            if let [off] = hits.as_slice() {
-                let disp = i32::from_le_bytes(file[off + 3..off + 7].try_into().unwrap());
-                if let Some((rva, _)) = to_rva(&sections, *off) {
-                    println!("  {:<14} global at +{:#x}", "", (rva as i64 + 7 + disp as i64));
-                }
+    let mut failures = Vec::new();
+    for sig in &game::SIGNATURES {
+        let pattern = Pattern::parse(sig.aob);
+        let hits: Vec<usize> = pattern.find_in(&file).into_iter().filter_map(|off| to_rva(&sections, off)).collect();
+        let at = match hits.as_slice() {
+            [rva] if *rva == sig.rva => format!("+{rva:#x}"),
+            [rva] => {
+                failures.push(format!("{} found at +{rva:#x}, expected +{:#x}", sig.name, sig.rva));
+                format!("+{rva:#x} (expected +{:#x})", sig.rva)
             }
+            _ => {
+                failures.push(format!("{} matched {} times", sig.name, hits.len()));
+                format!("{} hits", hits.len())
+            }
+        };
+        let hooked = if sig.start { hooked_check(&file, &sections, sig, &mut failures) } else { "-".into() };
+        println!("  {:<24} {at:<12} hooked: {hooked}", sig.name);
+    }
+    if !supported {
+        failures.push("unsupported exe".into());
+    }
+    if failures.is_empty() {
+        println!("all signatures ok");
+    } else {
+        println!("FAILED:\n  {}", failures.join("\n  "));
+    }
+    std::process::exit(if failures.is_empty() { 0 } else { 1 });
+}
+
+
+/// Overwrites the function's start with each kind of hook jump, and checks the signature with its
+/// head made wild still finds exactly that function.
+fn hooked_check(file: &[u8], sections: &[Section], sig: &game::Signature, failures: &mut Vec<String>) -> String {
+    let Some(off) = to_file(sections, sig.rva) else {
+        failures.push(format!("{} has no file offset", sig.name));
+        return "no file offset".into();
+    };
+    let tolerant = Pattern::parse(sig.aob).with_wild_head(HOOK_BYTES);
+    let jumps: [&[u8]; 2] = [&[0xE9, 0x11, 0x22, 0x33, 0x44], &[0xFF, 0x25, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8]];
+    for jump in jumps {
+        let mut copy = file.to_vec();
+        copy[off..off + jump.len()].copy_from_slice(jump);
+        let hits = tolerant.find_in(&copy);
+        if hits != [off] {
+            failures.push(format!("{} not found once after a {}-byte hook ({} hits)", sig.name, jump.len(), hits.len()));
+            return "FAILS".into();
         }
     }
-    std::process::exit(if ok { 0 } else { 1 });
+    "ok".into()
+}
+
+/// Which of the two resolvers failed on a signature, and the name in its error.
+fn outcome(module: &Module) -> [Result<(), String>; 2] {
+    let name = |e: ResolveError| match e {
+        ResolveError::Pattern { name, .. } => name.to_string(),
+        other => format!("not a signature error: {other}"),
+    };
+    [
+        game::resolve(module).map(|_| ()).map_err(name),
+        game::resolve_quick_start(module).map(|_| ()).map_err(name),
+    ]
+}
+
+/// Lays the exe out as the loader would, then breaks one signature at a time.
+fn damaged(file: &[u8], pe: usize, size_of_image: usize, sections: &[Section]) -> ! {
+    let headers = u32::from_le_bytes(file[pe + 24 + 60..pe + 24 + 64].try_into().unwrap()) as usize;
+    let mut image = vec![0u8; size_of_image];
+    image[..headers].copy_from_slice(&file[..headers]);
+    for s in sections {
+        let len = s.raw_size.min(size_of_image - s.rva).min(file.len() - s.raw);
+        image[s.rva..s.rva + len].copy_from_slice(&file[s.raw..s.raw + len]);
+    }
+    let module = Module { base: image.as_ptr() as usize, size: size_of_image, timestamp: 0 };
+    let mut failures = Vec::new();
+    let baseline = outcome(&module);
+    if baseline.iter().any(|r| r.is_err()) {
+        println!("FAILED: the undamaged image doesn't resolve: {baseline:?}");
+        std::process::exit(1);
+    }
+    for sig in &game::SIGNATURES {
+        let len = Pattern::parse(sig.aob).len();
+        let saved = image[sig.rva..sig.rva + len].to_vec();
+        // A plausible change from a patch: the code moved or was rewritten.
+        for b in &mut image[sig.rva..sig.rva + len] {
+            *b = 0xCC;
+        }
+        let module = Module { base: image.as_ptr() as usize, size: size_of_image, timestamp: 0 };
+        let got = outcome(&module);
+        image[sig.rva..sig.rva + len].copy_from_slice(&saved);
+        let failed: Vec<&String> = got.iter().filter_map(|r| r.as_ref().err()).collect();
+        let verdict = match failed.as_slice() {
+            [one] if one.as_str() == sig.name => "ok: only its feature is off, and the error names it".to_string(),
+            [] => "FAILS: nothing noticed".to_string(),
+            [one] => format!("FAILS: the error names {one}"),
+            _ => "FAILS: both features are off".to_string(),
+        };
+        if verdict.starts_with("FAILS") {
+            failures.push(format!("{}: {verdict}", sig.name));
+        }
+        println!("  {:<24} {verdict}", sig.name);
+    }
+    if failures.is_empty() {
+        println!("damaged exe: every signature fails alone, by name");
+    } else {
+        println!("FAILED:
+  {}", failures.join("
+  "));
+    }
+    std::process::exit(if failures.is_empty() { 0 } else { 1 });
 }
 
 struct Section {
-    name: String,
     rva: usize,
     raw: usize,
     raw_size: usize,
@@ -56,19 +151,15 @@ fn sections(file: &[u8], pe: usize) -> Vec<Section> {
         .map(|i| {
             let s = &file[table + i * 40..table + i * 40 + 40];
             let u = |o: usize| u32::from_le_bytes(s[o..o + 4].try_into().unwrap()) as usize;
-            Section {
-                name: String::from_utf8_lossy(&s[..8]).trim_end_matches('\0').to_string(),
-                rva: u(12),
-                raw_size: u(16),
-                raw: u(20),
-            }
+            Section { rva: u(12), raw_size: u(16), raw: u(20) }
         })
         .collect()
 }
 
-fn to_rva(sections: &[Section], off: usize) -> Option<(usize, &str)> {
-    sections
-        .iter()
-        .find(|s| off >= s.raw && off < s.raw + s.raw_size)
-        .map(|s| (off - s.raw + s.rva, s.name.as_str()))
+fn to_rva(sections: &[Section], off: usize) -> Option<usize> {
+    sections.iter().find(|s| off >= s.raw && off < s.raw + s.raw_size).map(|s| off - s.raw + s.rva)
+}
+
+fn to_file(sections: &[Section], rva: usize) -> Option<usize> {
+    sections.iter().find(|s| rva >= s.rva && rva < s.rva + s.raw_size).map(|s| rva - s.rva + s.raw)
 }

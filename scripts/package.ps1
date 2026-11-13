@@ -40,7 +40,7 @@ $dllDir = Join-Path $stage 'Game\dllMods'
 New-Item -ItemType Directory -Force $dllDir | Out-Null
 
 Copy-Item 'target\release\pocket_bonfire.dll' $dllDir
-Copy-Item 'README.md', 'LICENSE' $stage
+Copy-Item 'README.md', 'CHANGELOG.md', 'LICENSE' $stage
 
 $dinput8 = Join-Path $stage 'Game\dinput8.dll'
 $zip = [IO.Compression.ZipFile]::OpenRead($LazyLoaderZip)

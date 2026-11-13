@@ -1,0 +1,14 @@
+[package]
+name = "regression"
+description = "In-game regression test for Pocket Bonfire and Easy Come, Easy Go: loads the last save and plays through the risky moments"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "ds2_regression"
+crate-type = ["cdylib"]
+
+[dependencies]
+ds2.workspace = true
+minhook.workspace = true
