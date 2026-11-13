@@ -3,7 +3,7 @@
 Versions follow the release tags. Unreleased work is on `develop` or a `feature/*` branch until it's
 merged and tagged.
 
-## 0.11.0 (unreleased)
+## 0.11.0 (2026-11-13)
 
 If you also use Easy Come, Easy Go and play Seamless Co-op, update it to 0.2.0 too: either mod blocking
 the network is enough to break Seamless.
