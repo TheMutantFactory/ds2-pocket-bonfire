@@ -127,6 +127,12 @@ character, and with garbage settings. It takes over the screen for about 25 minu
 [docs/testing.md](docs/testing.md) has the full matrix of scenarios and checks, how releases are made,
 the last results, and what isn't covered yet.
 
+### Forking or reimplementing
+
+[docs/building-on-this.md](docs/building-on-this.md) has the lessons learned and caveats: the game's
+quirks, adding items without changing game files, living with other mods' hooks, the network and Seamless
+Co-op, and testing in the real game.
+
 `crates/probe` is the test DLL used to work out how the
 game behaves, and it isn't part of a release. [docs/design.md](docs/design.md) has the architecture and
 what each test found.
