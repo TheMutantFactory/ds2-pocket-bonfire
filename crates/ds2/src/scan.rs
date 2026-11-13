@@ -4,9 +4,31 @@ use crate::module::Module;
 use crate::{mem, win};
 use std::ffi::c_void;
 
-/// How many leading bytes another mod's hook may overwrite: a 5-byte relative jump, or a 14-byte
-/// absolute one. Function signatures are long enough to stay unique without them.
+/// How many leading bytes another mod's hook may overwrite when it isn't a jump we recognise. Function
+/// signatures are long enough to stay unique without them.
 pub const HOOK_BYTES: usize = 14;
+
+/// Past a recognised hook, at least this many of the signature's bytes must still be checked. The hook
+/// being there at all is most of the evidence.
+const MIN_TAIL_BYTES: usize = 6;
+
+/// How many leading bytes a hook jump replaced: the jump itself, plus the NOP or INT3 bytes a hooking
+/// library pads it with up to the next whole instruction. A 14-byte `jmp [rip+0]` over a function whose
+/// instructions end at byte 16 leaves two bytes of padding, which is what DS2 Inventory Suite does.
+/// `None` if `bytes` doesn't start with a jump we know.
+pub fn hook_len(bytes: &[u8]) -> Option<usize> {
+    let jump = match bytes {
+        [0xE9, ..] => 5,
+        [0xFF, 0x25, 0, 0, 0, 0, ..] => 14,
+        [0x48, 0xB8, rest @ ..] if rest.len() >= 10 && rest[8..10] == [0xFF, 0xE0] => 12,
+        _ => return None,
+    };
+    if bytes.len() < jump {
+        return None;
+    }
+    let padding = bytes[jump..].iter().take_while(|&&b| b == 0x90 || b == 0xCC).count();
+    Some(jump + padding)
+}
 
 #[derive(Debug, Clone)]
 pub struct Pattern(Vec<Option<u8>>);
@@ -40,7 +62,27 @@ impl Pattern {
     }
 
     fn matches(&self, hay: &[u8]) -> bool {
-        self.0.iter().zip(hay).all(|(p, b)| p.is_none_or(|p| p == *b))
+        self.matches_from(0, hay)
+    }
+
+    /// Whether the pattern matches `hay`, ignoring its first `skip` bytes.
+    fn matches_from(&self, skip: usize, hay: &[u8]) -> bool {
+        hay.len() >= self.0.len() && self.0[skip..].iter().zip(&hay[skip..]).all(|(p, b)| p.is_none_or(|p| p == *b))
+    }
+
+    /// Every offset in `bytes` where a hook jump sits and the pattern matches past it.
+    pub fn find_hooked_in(&self, bytes: &[u8]) -> Vec<usize> {
+        if bytes.len() < self.0.len() {
+            return Vec::new();
+        }
+        (0..=bytes.len() - self.0.len())
+            .filter(|&i| {
+                let Some(skip) = hook_len(&bytes[i..]) else { return false };
+                skip < self.0.len()
+                    && self.0[skip..].iter().filter(|b| b.is_some()).count() >= MIN_TAIL_BYTES
+                    && self.matches_from(skip, &bytes[i..])
+            })
+            .collect()
     }
 
     /// Every match offset in `bytes`.
@@ -68,17 +110,40 @@ impl Pattern {
     }
 }
 
-/// Finds a function by a signature that starts at its first byte. If that fails, it tries again
-/// without the bytes another mod's hook would have overwritten, so the function is still found when
-/// someone else hooked it first. Calling or hooking it then goes through their hook, as it should.
+/// Finds a function by a signature that starts at its first byte. If that fails, it looks for the
+/// function behind another mod's hook: first a jump we recognise followed by the rest of the
+/// signature, then the signature without the bytes an unknown hook could have overwritten. Calling or
+/// hooking it then goes through their hook, as it should.
 pub fn find_function(module: &Module, aob: &str) -> Result<usize, usize> {
+    let regions = readable_regions(module);
+    let borrowed: Vec<(usize, &[u8])> = regions.iter().map(|(start, bytes)| (*start, bytes.as_slice())).collect();
+    find_function_in_regions(&borrowed, aob)
+}
+
+/// `find_function` over a plain byte slice, such as an exe read from disk; offsets are into `bytes`.
+pub fn find_function_in(bytes: &[u8], aob: &str) -> Result<usize, usize> {
+    find_function_in_regions(&[(0, bytes)], aob)
+}
+
+fn find_function_in_regions(regions: &[(usize, &[u8])], aob: &str) -> Result<usize, usize> {
     let pattern = Pattern::parse(aob);
-    pattern.find_unique(module).or_else(|strict_hits| {
+    let unique = |hits: Vec<usize>| match hits.as_slice() {
+        [one] => Ok(*one),
+        hits => Err(hits.len()),
+    };
+    let all = |find: &dyn Fn(&[u8]) -> Vec<usize>| -> Vec<usize> {
+        regions.iter().flat_map(|(start, bytes)| find(bytes).into_iter().map(move |i| start + i)).collect()
+    };
+    let strict = unique(all(&|b| pattern.find_in(b)));
+    strict.or_else(|strict_hits| {
+        if let Ok(hit) = unique(all(&|b| pattern.find_hooked_in(b))) {
+            return Ok(hit);
+        }
         let tolerant = pattern.with_wild_head(HOOK_BYTES);
         if tolerant.known_bytes() < 8 {
             return Err(strict_hits);
         }
-        tolerant.find_unique(module).map_err(|_| strict_hits)
+        unique(all(&|b| tolerant.find_in(b))).map_err(|_| strict_hits)
     })
 }
 
@@ -165,5 +230,27 @@ mod tests {
         let mut absolute = ITEM_GIVE;
         absolute[..14].copy_from_slice(&[0xFF, 0x25, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8]);
         assert_eq!(pattern.with_wild_head(HOOK_BYTES).find_in(&absolute), [0]);
+    }
+
+    /// DS2 Inventory Suite's hook on ItemGive, as it was in the game: a 14-byte jump padded with two
+    /// NOPs to the end of the instruction it cut into. The 14-byte wild head alone missed it.
+    #[test]
+    fn a_padded_absolute_jump_is_skipped_whole() {
+        let mut hooked = ITEM_GIVE;
+        hooked[..16].copy_from_slice(&[0xFF, 0x25, 0, 0, 0, 0, 0x89, 0x44, 0xDC, 0x51, 0xFB, 0x7F, 0, 0, 0x90, 0x90]);
+        assert_eq!(hook_len(&hooked), Some(16));
+        let pattern = Pattern::parse(ITEM_GIVE_AOB);
+        assert!(pattern.with_wild_head(HOOK_BYTES).find_in(&hooked).is_empty());
+        assert_eq!(pattern.find_hooked_in(&hooked), [0]);
+        assert_eq!(find_function_in(&hooked, ITEM_GIVE_AOB), Ok(0));
+    }
+
+    #[test]
+    fn the_rest_must_still_match_behind_a_hook() {
+        let mut other = ITEM_GIVE;
+        other[..5].copy_from_slice(&[0xE9, 1, 2, 3, 4]);
+        other[20] ^= 0xFF;
+        assert!(Pattern::parse(ITEM_GIVE_AOB).find_hooked_in(&other).is_empty());
+        assert!(hook_len(&ITEM_GIVE).is_none());
     }
 }

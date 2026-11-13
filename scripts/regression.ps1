@@ -39,14 +39,16 @@ test's; keep the local files.
 #>
 param(
     [switch]$InGame,
-    [string[]]$Scenario = @('full', 'alone', 'hooked', 'seamless', 'coop', 'fresh', 'damaged'),
+    [string[]]$Scenario = @('full', 'alone', 'hooked', 'seamless', 'coop', 'inventory', 'fresh', 'damaged'),
     [string]$EasyComeEasyGo = (Join-Path (Split-Path (Split-Path $PSScriptRoot)) 'ds2-easy-come-easy-go'),
     [string]$GameDir = 'C:\Games\Steam\steamapps\common\Dark Souls II Scholar of the First Sin\Game',
     [string]$Exe = '',
     [int]$TimeoutMinutes = 15,
     # Logs every SuspendThread and ResumeThread call in the game to ds2_suspend_trace.log. It changes
     # the timing, so a startup freeze may not happen while it's on.
-    [switch]$TraceSuspends
+    [switch]$TraceSuspends,
+    # DS2 Inventory Suite's winmm.dll (Nexus 1811), for the inventory scenario.
+    [string]$InventorySuiteDll = 'D:\ds2-mods\extracted\inventory-recents-0.7\Game\winmm.dll'
 )
 $ErrorActionPreference = 'Stop'
 # Through -File a list arrives as one string, so split it here.
@@ -116,7 +118,15 @@ $modEngineIni = Join-Path $GameDir 'modengine.ini'
 $haveModEngineIni = Test-Path $modEngineIni
 if ($haveModEngineIni) { Copy-Item $modEngineIni (Join-Path $run 'modengine-before.ini') }
 
+# Files a scenario adds next to the exe, and that those files write there; removed after each scenario
+# unless they were there before.
+$gameDirExtras = @('winmm.dll', 'DS2InventorySuite.log', 'DS2Recents.log', 'DS2StackOverflow.log', 'DS2Recents.history')
+$gameDirBefore = @($gameDirExtras | Where-Object { Test-Path (Join-Path $GameDir $_) })
+
 function Restore-Game {
+    foreach ($f in $gameDirExtras) {
+        if ($gameDirBefore -notcontains $f) { Remove-Item (Join-Path $GameDir $f) -Force -ErrorAction SilentlyContinue }
+    }
     Copy-Item (Join-Path $run 'saves\*') $saves -Recurse -Force
     Remove-Item $dllMods -Recurse -Force
     Copy-Item (Join-Path $run 'dllMods-before') $dllMods -Recurse
@@ -216,6 +226,16 @@ $scenarios = [ordered]@{
         Want  = @{ 'pocket_bonfire.log' = @('network check left alone'); 'easy_come_easy_go.log' = @('network check left alone') }
         Bad   = @{ 'pocket_bonfire.log' = @('network blocked', 'network start refused'); 'easy_come_easy_go.log' = @('network blocked', 'network start refused') }
     }
+    # DS2 Inventory Suite (Nexus 1811): a winmm.dll the exe loads before Lazy Loader, so its hooks on the
+    # item and text code are in place before either mod looks. Its own log must say it's active.
+    inventory = @{
+        Cfg      = @{ cycles = 1 }
+        Requires = { Test-Path $InventorySuiteDll }
+        Setup    = { Copy-Item $InventorySuiteDll (Join-Path $GameDir 'winmm.dll') -Force }
+        GameLogs = @('DS2InventorySuite.log', 'DS2Recents.log', 'DS2StackOverflow.log')
+        Want     = @{ 'DS2InventorySuite.log' = @('active') }
+        Bad      = @{ 'DS2InventorySuite.log' = @('inactive', 'not found', 'failed') }
+    }
     fresh    = @{
         Cfg   = @{ cycles = 1 }
         Setup = {
@@ -263,6 +283,7 @@ foreach ($name in $Scenario) {
     $script:prefix = "[$name] "
     if (-not $sc) { Note 'FAIL' "unknown scenario"; continue }
     if ($sc.Launcher -and -not (Test-Path (Join-Path $GameDir $sc.Launcher))) { Note 'SKIP' "$($sc.Launcher) isn't installed"; continue }
+    if ($sc.Requires -and -not (& $sc.Requires)) { Note 'SKIP' "what this scenario needs isn't there"; continue }
     $dir = Join-Path $run $name
     New-Item -ItemType Directory -Force $dir | Out-Null
     $started = Get-Date
@@ -336,6 +357,7 @@ foreach ($name in $Scenario) {
         }
         else { Note 'FAIL' 'the game never started' }
         Get-ChildItem $dllMods -File | Where-Object { $_.Extension -in '.log', '.results' } | ForEach-Object { Copy-Item $_.FullName $dir }
+        foreach ($l in @($sc.GameLogs)) { if ($l -and (Test-Path (Join-Path $GameDir $l))) { Copy-Item (Join-Path $GameDir $l) $dir } }
     }
     finally { Restore-Game }
 

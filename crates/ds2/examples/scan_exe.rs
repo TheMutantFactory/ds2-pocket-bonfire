@@ -1,7 +1,7 @@
 //! Offline signature check, run by the regression tests and after any Steam patch: scans a
 //! DarkSoulsII.exe on disk for every signature the mod uses. Each must match once, at the address the
-//! mod expects, and every function signature must still match once after another mod's hook has
-//! overwritten the function's first bytes, both as a 5-byte and a 14-byte jump.
+//! mod expects, and every function signature must still be found after another mod's hook has
+//! overwritten the function's first bytes: 5-, 12- and 14-byte jumps, with and without padding.
 //!
 //! With `--damaged`, it checks what a changed exe does instead: it lays the exe out in memory as the
 //! game would, then breaks each signature in turn. Only the feature using that signature may fail,
@@ -12,7 +12,7 @@
 
 use ds2::game::{self, ResolveError};
 use ds2::module::Module;
-use ds2::scan::{Pattern, HOOK_BYTES};
+use ds2::scan::{find_function_in, Pattern};
 
 fn main() {
     let path = std::env::args().nth(1).expect("usage: scan_exe <path to DarkSoulsII.exe> [--damaged]");
@@ -56,22 +56,31 @@ fn main() {
 }
 
 
-/// Overwrites the function's start with each kind of hook jump, and checks the signature with its
-/// head made wild still finds exactly that function.
+/// Overwrites the function's start with each kind of hook jump, and checks the mods' own lookup
+/// (`find_function`) still finds exactly that function. The padded jumps are the shape hooking
+/// libraries write when the jump ends inside an instruction; DS2 Inventory Suite's is one of them.
 fn hooked_check(file: &[u8], sections: &[Section], sig: &game::Signature, failures: &mut Vec<String>) -> String {
     let Some(off) = to_file(sections, sig.rva) else {
         failures.push(format!("{} has no file offset", sig.name));
         return "no file offset".into();
     };
-    let tolerant = Pattern::parse(sig.aob).with_wild_head(HOOK_BYTES);
-    let jumps: [&[u8]; 2] = [&[0xE9, 0x11, 0x22, 0x33, 0x44], &[0xFF, 0x25, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8]];
-    for jump in jumps {
+    let absolute: &[u8] = &[0xFF, 0x25, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8];
+    let jumps: [(&str, Vec<u8>); 5] = [
+        ("5-byte", vec![0xE9, 0x11, 0x22, 0x33, 0x44]),
+        ("5-byte padded", vec![0xE9, 0x11, 0x22, 0x33, 0x44, 0x90, 0x90, 0x90]),
+        ("12-byte", vec![0x48, 0xB8, 1, 2, 3, 4, 5, 6, 7, 8, 0xFF, 0xE0]),
+        ("14-byte", absolute.to_vec()),
+        ("14-byte padded", [absolute, &[0x90, 0x90]].concat()),
+    ];
+    for (kind, jump) in jumps {
         let mut copy = file.to_vec();
-        copy[off..off + jump.len()].copy_from_slice(jump);
-        let hits = tolerant.find_in(&copy);
-        if hits != [off] {
-            failures.push(format!("{} not found once after a {}-byte hook ({} hits)", sig.name, jump.len(), hits.len()));
-            return "FAILS".into();
+        copy[off..off + jump.len()].copy_from_slice(&jump);
+        match find_function_in(&copy, sig.aob) {
+            Ok(hit) if hit == off => {}
+            other => {
+                failures.push(format!("{} not found after a {kind} hook ({other:?})", sig.name));
+                return "FAILS".into();
+            }
         }
     }
     "ok".into()

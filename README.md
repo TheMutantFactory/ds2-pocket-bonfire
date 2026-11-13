@@ -82,9 +82,10 @@ launching through Steam, or a game with Mod Engine's mods goes online.
 ## Other mods
 
 The feather's data and text are added in memory, so the mod doesn't replace any game files and can't
-conflict with mods that change params or text. It has been played alongside Bonfire Level Up, StatFixer,
-True Easy Parry, RIP Enemies, No More Adaptability, Load Loose Param Files, Mod Engine, DS2 Lighting
-Engine and Texture Renewal Project.
+conflict with mods that change params or text. It has been played alongside Easy Come, Easy Go, Bonfire
+Level Up, StatFixer, True Easy Parry, RIP Enemies, No More Adaptability, Load Loose Param Files, Mod
+Engine, DS2 Lighting Engine, Texture Renewal Project, Seamless Co-op 0.0.7 (from 0.11.0) and DS2 Inventory
+Overhaul / Inventory Suite 1.0.1 (from 0.11.1).
 
 ## Uninstall
 
