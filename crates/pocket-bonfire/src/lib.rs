@@ -41,12 +41,12 @@ const SETTINGS: [Setting; 3] = [
     Setting {
         name: "skip_network_check",
         default: true,
-        help: "Skip the network check and go straight to the title menu, offline. Turn off for Seamless Co-op.",
+        help: "Skip the network check and go straight to the title menu, offline. Ignored under Seamless Co-op, which needs the check.",
     },
     Setting {
         name: "block_network",
         default: true,
-        help: "Block all network access, so a modded game can't go online. Turn off for Seamless Co-op.",
+        help: "Block all network access, so a modded game can't go online. Ignored under Seamless Co-op, which needs the network.",
     },
 ];
 
@@ -58,6 +58,9 @@ static ORIG_WARP_FUNC: AtomicUsize = AtomicUsize::new(0);
 static ORIG_FMG_LOOKUP: AtomicUsize = AtomicUsize::new(0);
 static ORIG_TITLE_INIT_BRANCH: AtomicUsize = AtomicUsize::new(0);
 static ORIG_TITLE_NETWORK_CHECK: AtomicUsize = AtomicUsize::new(0);
+static ORIG_WSA_STARTUP: AtomicUsize = AtomicUsize::new(0);
+/// What `DllMain` saw: why the game counts as running under Seamless Co-op, if it does.
+static SEAMLESS_AT_START: OnceLock<Option<&'static str>> = OnceLock::new();
 
 /// The hooks only raise these; the mod's logic runs on its own thread.
 static ITEM_USED: AtomicBool = AtomicBool::new(false);
@@ -65,6 +68,7 @@ static WARP_SEEN: AtomicBool = AtomicBool::new(false);
 static TEXT_SERVED: AtomicBool = AtomicBool::new(false);
 static NETWORK_BLOCKED: AtomicBool = AtomicBool::new(false);
 static NETWORK_REFUSED: AtomicBool = AtomicBool::new(false);
+static NETWORK_LET_THROUGH: AtomicBool = AtomicBool::new(false);
 
 /// The item's strings as the game wants them, NUL-terminated UTF-16 that lives as long as the process.
 static ITEM_TEXT: OnceLock<[Vec<u16>; 3]> = OnceLock::new();
@@ -105,8 +109,10 @@ pub extern "system" fn DllMain(_module: *mut c_void, reason: u32, _reserved: *mu
     if reason == DLL_PROCESS_ATTACH {
         // The network hook can't wait for the thread: the game may start networking as soon as it
         // runs. Reading the settings file first is a plain file read. Everything else stays out of
-        // the loader lock, and starts once DllMain returns.
-        if config().get("block_network") {
+        // the loader lock, and starts once DllMain returns. Under Seamless Co-op nothing is blocked.
+        let seamless = ds2::seamless::detect();
+        let _ = SEAMLESS_AT_START.set(seamless);
+        if config().get("block_network") && seamless.is_none() {
             NETWORK_BLOCKED.store(unsafe { block_network() }, Ordering::SeqCst);
         }
         std::thread::spawn(run);
@@ -118,15 +124,31 @@ pub extern "system" fn DllMain(_module: *mut c_void, reason: u32, _reserved: *mu
 /// modded can reach the servers even if this mod's other changes don't apply.
 unsafe fn block_network() -> bool {
     MinHook::create_hook_api("ws2_32", "WSAStartup", wsa_startup_detour as *mut c_void)
+        .map(|orig| ORIG_WSA_STARTUP.store(orig as usize, Ordering::SeqCst))
         .and_then(|_| MinHook::enable_all_hooks())
         .is_ok()
 }
 
 const WSASYSNOTREADY: i32 = 10091;
 
-unsafe extern "system" fn wsa_startup_detour(_version: u16, _data: *mut c_void) -> i32 {
+type WsaStartupFn = unsafe extern "system" fn(u16, *mut c_void) -> i32;
+
+/// Refuses, unless Seamless Co-op's DLL has arrived since startup: Steam's networking closes the game
+/// when this fails, and Seamless keeps the game off FromSoftware's servers itself.
+unsafe extern "system" fn wsa_startup_detour(version: u16, data: *mut c_void) -> i32 {
+    let orig = ORIG_WSA_STARTUP.load(Ordering::SeqCst);
+    if orig != 0 && ds2::seamless::dll_loaded() {
+        NETWORK_LET_THROUGH.store(true, Ordering::SeqCst);
+        let orig: WsaStartupFn = std::mem::transmute(orig);
+        return orig(version, data);
+    }
     NETWORK_REFUSED.store(true, Ordering::SeqCst);
     WSASYSNOTREADY
+}
+
+/// Why the game counts as running under Seamless Co-op: what `DllMain` saw, or what's true now.
+fn seamless() -> Option<&'static str> {
+    SEAMLESS_AT_START.get().copied().flatten().or_else(ds2::seamless::detect)
 }
 
 fn run() {
@@ -144,7 +166,10 @@ fn run() {
             Err(e) => log::line(format!("couldn't write the settings file: {e}")),
         }
     }
-    if config.get("block_network") {
+    let seamless = seamless();
+    if let Some(why) = seamless {
+        log::line(format!("Seamless Co-op ({why}): network check and network left alone"));
+    } else if config.get("block_network") {
         log::line(format!("network blocked: {}", NETWORK_BLOCKED.load(Ordering::SeqCst)));
     }
     let module = match game::game_module() {
@@ -154,7 +179,7 @@ fn run() {
             return;
         }
     };
-    start_quick_start(&module, config);
+    start_quick_start(&module, config, seamless.is_some());
 
     let addrs = match game::resolve(&module) {
         Ok(a) => a,
@@ -184,10 +209,10 @@ fn run() {
     Mod::new(Store::new(dir)).run(&addrs);
 }
 
-/// The parts of the quick start the settings ask for. A failure here is logged and leaves the bonfire
-/// alone.
-fn start_quick_start(module: &ds2::module::Module, config: &Settings) {
-    let (logos, check) = (config.get("skip_logos"), config.get("skip_network_check"));
+/// The parts of the quick start the settings ask for. Seamless Co-op needs the network check, so it
+/// runs there whatever the settings say. A failure here is logged and leaves the bonfire alone.
+fn start_quick_start(module: &ds2::module::Module, config: &Settings, seamless: bool) {
+    let (logos, check) = (config.get("skip_logos"), config.get("skip_network_check") && !seamless);
     if !logos && !check {
         return;
     }
@@ -372,6 +397,9 @@ impl Mod {
         self.keep_item_row(addrs);
         if NETWORK_REFUSED.swap(false, Ordering::SeqCst) {
             log::line("network start refused".into());
+        }
+        if NETWORK_LET_THROUGH.swap(false, Ordering::SeqCst) {
+            log::line("network start let through: Seamless Co-op's DLL is loaded".into());
         }
         if !self.text_logged && TEXT_SERVED.load(Ordering::SeqCst) {
             self.text_logged = true;

@@ -15,5 +15,6 @@ pub mod mem;
 pub mod module;
 pub mod param;
 pub mod scan;
+pub mod seamless;
 pub mod settings;
 mod win;

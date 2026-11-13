@@ -183,7 +183,8 @@ $always = @{
     'pocket_bonfire.log'    = @('ready', 'game calls run on the main thread', 'item use ignored', 'respawned at the pocket bonfire, moved=true', 'opened=true')
     'easy_come_easy_go.log' = @('ready', 'item used: saving and going to the title', 'at the title: closing=true')
 }
-$never = @('disabled', "didn't happen", "didn't pick it up", 'hooks failed', 'settings file:')
+# 'Seamless Co-op (' only belongs in the coop scenario: anywhere else the detection fired by mistake.
+$never = @('disabled', "didn't happen", "didn't pick it up", 'hooks failed', 'settings file:', 'Seamless Co-op (')
 $scenarios = [ordered]@{
     full     = @{ Cfg = @{ cycles = 3; extras = 'true' }; Want = @{ 'pocket_bonfire.log' = @('not placed:', 'rested at a real bonfire') } }
     alone    = @{
@@ -225,21 +226,24 @@ $scenarios = [ordered]@{
         }
         Want  = @{ 'pocket_bonfire.log' = @('gave the item to'); 'easy_come_easy_go.log' = @('gave the item to') }
     }
-    # Real Seamless Co-op: started through its launcher, which injects ds2sc.dll, with the network left
-    # open since Seamless needs it: Steam's networking asserts and kills the game if WSAStartup fails.
-    # Seamless keeps the game off FromSoftware's servers itself. It plays from its own .co2 save.
+    # Real Seamless Co-op: started through its launcher, which injects ds2sc.dll. Seamless needs the
+    # network (Steam's networking closes the game if WSAStartup fails) and keeps the game off
+    # FromSoftware's servers itself. Both mods keep their default settings, which block the network,
+    # and must see Seamless and leave it alone. It plays from its own .co2 save.
     coop     = @{
         Cfg      = @{ cycles = 1 }
         Launcher = 'ds2sc_launcher.exe'
         Setup    = {
-            foreach ($ini in 'pocket_bonfire.ini', 'easy_come_easy_go.ini') {
-                Set-Ini (Join-Path $dllMods $ini) ([ordered]@{ skip_logos = 'true'; skip_network_check = 'false'; block_network = 'false' })
-            }
-            # Mod Engine's own network block, put back by Restore-Game.
+            foreach ($ini in 'pocket_bonfire.ini', 'easy_come_easy_go.ini') { Remove-Item (Join-Path $dllMods $ini) -ErrorAction SilentlyContinue }
+            # Mod Engine's own network block isn't ours to switch; Restore-Game puts it back.
             if ($haveModEngineIni) { (Get-Content $modEngineIni) -replace '^blockNetworkAccess=1', 'blockNetworkAccess=0' | Set-Content $modEngineIni -Encoding ascii }
         }
-        Want     = @{ 'pocket_bonfire.log' = @('network check left alone'); 'easy_come_easy_go.log' = @('network check left alone') }
+        Want     = @{
+            'pocket_bonfire.log'    = @('Seamless Co-op (started by ds2sc_launcher.exe)', 'network check left alone')
+            'easy_come_easy_go.log' = @('Seamless Co-op (started by ds2sc_launcher.exe)', 'network check left alone')
+        }
         Bad      = @{ 'pocket_bonfire.log' = @('network blocked', 'network start refused'); 'easy_come_easy_go.log' = @('network blocked', 'network start refused') }
+        Allow    = @('Seamless Co-op (')
     }
     damaged  = @{
         Cfg   = @{ cycles = 1 }
