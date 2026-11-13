@@ -104,8 +104,7 @@ pub const OFF_BONFIRE_MANAGER: usize = 0x58;
 pub const OFF_REST_MENU_ACTIVE: usize = 0x38;
 /// PlayerCtrl child.
 pub const OFF_SP_EFFECT_CTRL: usize = 0x3e0;
-/// PlayerCtrl child holding stats, and HP within it (DS2S-META `PlayerParam`, `HP`, `HPMax`).
-pub const OFF_PLAYER_PARAM: usize = 0x490;
+/// HP and maximum HP, directly in PlayerCtrl (DS2S-META `HP`, `HPMax`).
 pub const OFF_HP: usize = 0x168;
 pub const OFF_HP_MAX: usize = 0x170;
 /// BaseA child, and the character name within it (DS2S-META `PlayerName`).
@@ -382,15 +381,18 @@ impl Addresses {
         (!units.is_empty()).then_some(units)
     }
 
-    /// The player's current and maximum HP (DS2S-META `PlayerParam` +0x168 and +0x170).
+    /// The player's current and maximum HP, if they look like HP: a maximum between 1 and 99999 and
+    /// a current value no higher than it.
     pub fn hp(&self) -> Option<(i32, i32)> {
-        let param = mem::ptr(self.player_ctrl()? + OFF_PLAYER_PARAM)?;
-        Some((mem::read::<i32>(param + OFF_HP)?, mem::read::<i32>(param + OFF_HP_MAX)?))
+        let pc = self.player_ctrl()?;
+        let (hp, max) = (mem::read::<i32>(pc + OFF_HP)?, mem::read::<i32>(pc + OFF_HP_MAX)?);
+        ((1..100_000).contains(&max) && (0..=max).contains(&hp)).then_some((hp, max))
     }
 
     /// Sets the player's HP. Zero kills them, which the regression tests use to check respawning.
+    /// Refuses unless `hp()` reads sensible values, so a wrong offset can't overwrite something else.
     pub fn set_hp(&self, hp: i32) -> bool {
-        self.player_ctrl().and_then(|pc| mem::ptr(pc + OFF_PLAYER_PARAM)).is_some_and(|param| mem::write(param + OFF_HP, hp))
+        self.hp().is_some() && self.player_ctrl().is_some_and(|pc| mem::write(pc + OFF_HP, hp))
     }
 
     /// The text the game shows for an item string, read through its own lookup, hooks included.

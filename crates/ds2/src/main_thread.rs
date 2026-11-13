@@ -69,7 +69,34 @@ unsafe extern "system" fn xinput_get_state(index: u32, state: *mut c_void) -> u3
         }
     }
     let next: XInputGetState = std::mem::transmute(NEXT.load(Ordering::SeqCst));
-    next(index, state)
+    let result = next(index, state);
+    let held = PAD_BUTTONS.load(Ordering::Relaxed);
+    if held == 0 || index != 0 || state.is_null() {
+        return result;
+    }
+    // A virtual controller in slot 0, for the regression test: a real one keeps its sticks.
+    if result != 0 {
+        std::ptr::write_bytes(state as *mut u8, 0, XINPUT_STATE_SIZE);
+    }
+    let packet = PAD_PACKET.fetch_add(1, Ordering::Relaxed);
+    *(state as *mut u32) = packet;
+    *((state as *mut u8).add(4) as *mut u16) |= held;
+    0
+}
+
+/// `XINPUT_STATE`: packet number, then buttons at +4, triggers and sticks.
+const XINPUT_STATE_SIZE: usize = 16;
+pub const PAD_A: u16 = 0x1000;
+pub const PAD_B: u16 = 0x2000;
+static PAD_BUTTONS: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
+static PAD_PACKET: AtomicU32 = AtomicU32::new(1);
+
+/// Holds `buttons` on a virtual controller in slot 0 for `hold`, then lets go. Only the regression
+/// test uses it: it reaches the game whether or not its window has the focus.
+pub fn press_pad(buttons: u16, hold: Duration) {
+    PAD_BUTTONS.store(buttons, Ordering::Relaxed);
+    std::thread::sleep(hold);
+    PAD_BUTTONS.store(0, Ordering::Relaxed);
 }
 
 /// Points the exe's `XInputGetState` import at the mod. Call it inside `hooks::serialized`, so two

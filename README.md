@@ -114,7 +114,7 @@ test DLL (`crates/regression`), launches the game through Steam, loads the most 
 through the risky moments: item text, placing, a quick triple use, dying and respawning (with a check
 for damage from the move), resting, and Easy Go's quit. Then it puts back the saves and `dllMods`
 exactly as they were and reports the results, both mods' logs and any crashes. It takes over the
-keyboard for a few minutes, and needs a save whose last bonfire is in the map you're standing in. `crates/probe` is the test DLL used to work out how the
+controller input and the screen for a few minutes, and needs a save whose last bonfire is in the map you're standing in. `crates/probe` is the test DLL used to work out how the
 game behaves, and it isn't part of a release. [docs/design.md](docs/design.md) has the architecture and
 what each test found.
 

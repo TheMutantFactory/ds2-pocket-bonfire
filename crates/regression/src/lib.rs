@@ -1,7 +1,7 @@
 //! In-game regression test. `scripts/regression.ps1` drops this DLL into `Game\dllMods\` for one launch,
 //! next to the mods under test, and reads the results file it writes.
 //!
-//! It loads the most recent save with the keyboard, then plays through what has broken before:
+//! It loads the most recent save with a virtual controller, then plays through what has broken before:
 //! item text, placing a pocket bonfire, a double use, dying and respawning at it (with a check for
 //! damage from the move, which wore out a Silvercat Ring), resting there, and Easy Go's quit. Item uses
 //! are simulated the way the game reports them: by applying the item's effect id to the player.
@@ -38,65 +38,6 @@ pub extern "system" fn DllMain(_module: *mut c_void, reason: u32, _reserved: *mu
 extern "system" {
     fn GetModuleHandleW(name: *const u16) -> *mut c_void;
     fn ExitProcess(code: u32) -> !;
-}
-
-#[link(name = "user32")]
-extern "system" {
-    fn SendInput(count: u32, inputs: *const Input, size: i32) -> u32;
-    fn SetForegroundWindow(window: *mut c_void) -> i32;
-    fn EnumWindows(callback: unsafe extern "system" fn(*mut c_void, isize) -> i32, param: isize) -> i32;
-    fn GetWindowThreadProcessId(window: *mut c_void, process: *mut u32) -> u32;
-    fn IsWindowVisible(window: *mut c_void) -> i32;
-}
-
-#[link(name = "kernel32")]
-extern "system" {
-    fn GetCurrentProcessId() -> u32;
-}
-
-/// `INPUT` for a keyboard event, padded to the size of the union.
-#[repr(C)]
-struct Input {
-    kind: u32,
-    _pad: u32,
-    vk: u16,
-    scan: u16,
-    flags: u32,
-    time: u32,
-    extra: usize,
-    _union_tail: [u8; 8],
-}
-
-const KEYEVENTF_KEYUP: u32 = 0x2;
-const KEYEVENTF_SCANCODE: u32 = 0x8;
-const SCAN_ENTER: u16 = 0x1c;
-const SCAN_E: u16 = 0x12;
-const SCAN_ESCAPE: u16 = 0x01;
-const SCAN_Q: u16 = 0x10;
-
-/// Presses and releases a key by scan code, which is what the game's DirectInput reads.
-fn press(scan: u16) {
-    focus_game();
-    let key = |flags| Input { kind: 1, _pad: 0, vk: 0, scan, flags, time: 0, extra: 0, _union_tail: [0; 8] };
-    unsafe {
-        SendInput(1, &key(KEYEVENTF_SCANCODE), std::mem::size_of::<Input>() as i32);
-        std::thread::sleep(Duration::from_millis(80));
-        SendInput(1, &key(KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP), std::mem::size_of::<Input>() as i32);
-    }
-    std::thread::sleep(Duration::from_millis(250));
-}
-
-fn focus_game() {
-    unsafe extern "system" fn each(window: *mut c_void, _: isize) -> i32 {
-        let mut pid = 0u32;
-        GetWindowThreadProcessId(window, &mut pid);
-        if pid == GetCurrentProcessId() && IsWindowVisible(window) != 0 {
-            SetForegroundWindow(window);
-            return 0;
-        }
-        1
-    }
-    unsafe { EnumWindows(each, 0) };
 }
 
 fn record(status: &str, step: &str, detail: impl AsRef<str>) {
@@ -179,21 +120,30 @@ fn run() {
     std::thread::sleep(Duration::from_secs(3));
     pass("title", format!("reached after {:.1} s", started.elapsed().as_secs_f32()));
 
-    // Load the most recent save: confirm on the title menu, then on the save list. Enter and E are
-    // both tried, since which one confirms depends on the key bindings.
+    // Load the most recent save: confirm on the title menu, then on the save list, with a virtual
+    // controller's A button. The keyboard didn't reach the game in the first run. The state is logged
+    // every few presses, so a run that doesn't get in shows where it stood.
+    let mut presses = 0u32;
     let loaded = wait_for(Duration::from_secs(240), || {
         if a.playable() {
             return true;
         }
-        if a.snapshot().loading != Some(0) || a.player_ctrl().is_some() {
+        let s = a.snapshot();
+        if presses % 4 == 0 {
+            log::line(format!(
+                "load save: {presses} presses so far, game_state {:?}, loading {:?}, player {}",
+                s.game_state,
+                s.loading,
+                a.player_ctrl().is_some()
+            ));
+        }
+        // Only press while nothing is loading: a press during a load can land on the next screen.
+        if s.loading.is_some_and(|l| l != 0) {
             return false;
         }
-        press(SCAN_ENTER);
-        std::thread::sleep(Duration::from_millis(1200));
-        if !a.playable() && a.player_ctrl().is_none() {
-            press(SCAN_E);
-            std::thread::sleep(Duration::from_millis(1200));
-        }
+        main_thread::press_pad(main_thread::PAD_A, Duration::from_millis(150));
+        presses += 1;
+        std::thread::sleep(Duration::from_millis(1500));
         false
     });
     if !loaded {
@@ -270,8 +220,10 @@ fn pocket_bonfire(a: Addresses) {
     }
 
     // Die, and check the respawn lands on the spot without costing health.
-    if !a.set_hp(0) {
-        return fail("respawn", "couldn't set HP");
+    let before = a.hp();
+    log::line(format!("HP before dying: {before:?}"));
+    if !main_thread::call("kill", MAIN_THREAD_WAIT, move || a.set_hp(0)).unwrap_or(false) {
+        return fail("respawn", format!("couldn't set HP, read {before:?}"));
     }
     if !wait_for(Duration::from_secs(30), || !a.playable()) {
         return fail("respawn", "the player didn't die");
@@ -285,11 +237,10 @@ fn pocket_bonfire(a: Addresses) {
         Some(pos) => fail("respawn", format!("{:.1} m from the spot", distance(spot, pos))),
         None => fail("respawn", "no position after respawning"),
     }
-    match a.hp() {
-        Some((hp, max)) if hp >= max => pass("respawn damage", format!("full HP, {hp}/{max}")),
-        Some((hp, max)) => fail("respawn damage", format!("the move cost health: {hp}/{max}")),
-        None => fail("respawn damage", "couldn't read HP"),
-    }
+    // Hollowing caps HP below the maximum, so the respawn's HP is compared with the HP after resting,
+    // which refills to that cap.
+    let respawn_hp = a.hp();
+    log::line(format!("HP after respawning: {respawn_hp:?}"));
 
     // Rest at it, then leave the menu.
     std::thread::sleep(Duration::from_secs(2));
@@ -301,10 +252,17 @@ fn pocket_bonfire(a: Addresses) {
     } else {
         fail("rest", "the bonfire menu didn't open");
     }
+    std::thread::sleep(Duration::from_secs(2));
+    let rested_hp = a.hp();
+    match (respawn_hp, rested_hp) {
+        (Some((hp, _)), Some((full, max))) if hp >= full => pass("respawn damage", format!("none: {hp} after respawning, {full}/{max} after resting")),
+        (Some((hp, _)), Some((full, max))) => fail("respawn damage", format!("the move cost health: {hp} after respawning, {full}/{max} after resting")),
+        (r, f) => fail("respawn damage", format!("couldn't read HP: {r:?} after respawning, {f:?} after resting")),
+    }
     close_menus(a);
 }
 
-/// Backs out of the bonfire menu. Escape and Q are both tried, for the same reason as Enter and E.
+/// Backs out of the bonfire menu with B.
 fn close_menus(a: Addresses) {
     if !a.rest_menu_open() {
         return;
@@ -313,12 +271,8 @@ fn close_menus(a: Addresses) {
         if !a.rest_menu_open() && a.playable() {
             return true;
         }
-        press(SCAN_ESCAPE);
+        main_thread::press_pad(main_thread::PAD_B, Duration::from_millis(150));
         std::thread::sleep(Duration::from_millis(1500));
-        if a.rest_menu_open() {
-            press(SCAN_Q);
-            std::thread::sleep(Duration::from_millis(1500));
-        }
         false
     });
     if closed {

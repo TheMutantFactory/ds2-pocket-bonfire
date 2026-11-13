@@ -11,7 +11,7 @@ With -InGame it also plays the game once: it installs fresh builds of both mods 
 and plays through the risky moments. Afterwards it puts back the saves and the dllMods folder exactly
 as they were, and reports the results, both mods' logs and any crashes.
 
-The in-game run takes over the keyboard and the screen for a few minutes. Don't use the PC while
+The in-game run takes over the screen and presses buttons on a virtual controller for a few minutes. Don't use the PC while
 it runs. If Steam Cloud is on for the game, Steam may ask about a sync conflict on the next launch,
 since the saves are put back after Steam has seen the test's; keep the local files.
 
