@@ -35,8 +35,9 @@ Run for both repos.
 |---|---|
 | Unit tests (`cargo test --workspace`) | Settings files, including binary garbage; saved bonfires and per-character records, including damaged ones; adding the item's row to the item table; the hook lock letting one mod in at a time; a signature still matching a hooked function; Seamless launcher detection by file name |
 | Signatures, plain | Every function and value the mods use is found in the 1.03 exe, exactly once |
-| Signatures, hooked | Each is still found with another mod's hook over the function's first bytes |
+| Signatures, hooked | Each is still found with another mod's hook over the function's first bytes: 5-, 12- and 14-byte jumps, with and without padding |
 | Damaged exe | Breaking one signature at a time turns off only the feature that uses it, with an error naming it |
+| Changed past recognition | A padded hook jump plus a patch further in: each function is still found by its known address on 1.03, but not on another build or once its code is gone; the logo skip refuses rather than read a covered address |
 
 ## In-game scenarios
 
@@ -51,37 +52,42 @@ and a screenshot of a stuck run are kept in `out\regression-<time>\`.
 |---|---|---|---|---|
 | `full` | Steam | As installed | Defaults | Blocked by the mods |
 | `alone` | Steam | None | Defaults | Blocked by the mods |
-| `hooked` | Steam | As installed, plus `crates/hookfirst` loaded first, hooking every function the mods hook | Defaults | Blocked by the mods |
+| `hooked` | Steam | As installed, plus `crates/hookfirst` loaded first, hooking every function the mods hook, and once a save is loaded swapping the item table for a copy without the mods' rows | Defaults | Blocked by the mods |
 | `seamless` | Steam | As installed | Network check and network block off | Blocked by the test DLL instead |
 | `coop` | `ds2sc_launcher.exe` (Seamless Co-op), through Explorer | As installed, plus Seamless | Defaults | Open: the mods must see Seamless; Mod Engine's block is turned off for the run |
+| `inventory` | Steam | As installed, plus DS2 Inventory Suite's `winmm.dll` next to the exe, which hooks the item code before the mods load | Defaults | Blocked by the mods |
 | `fresh` | Steam | As installed | Defaults, no per-character records | Blocked by the mods |
 | `damaged` | Steam | As installed | Garbage settings files and a garbage saved bonfire | Blocked by the mods |
 
 ### What each scenario checks
 
-| Check | full | alone | hooked | seamless | coop | fresh | damaged |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| Reaches the title and loads the save | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Both items' names and descriptions show | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Placing a pocket bonfire | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Three quick uses don't start three rests | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Dying respawns at the pocket bonfire, without damage from the move | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Resting opens the bonfire menu, and the menu closes | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Easy Go saves, reaches the title and closes the game | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| No crash, except the known closing one | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Three loads in one launch, quitting to the title between | ✓ | | | | | | |
-| Item used mid-roll, with the menu open, and right before a quit | ✓ | | | | | | |
-| Placing with no bonfire in the map is refused | ✓ | | | | | | |
-| A real bonfire's rest takes over from the pocket one | ✓ | | | | | | |
-| The other mod's hook is in place and still works | | | ✓ | | | | |
-| Network check left alone, no network start refused | | | | ✓ | ✓ | | |
-| Seamless Co-op seen by both mods | | | | | ✓ | | |
-| Seamless Co-op *not* seen (a false detection fails the run) | ✓ | ✓ | ✓ | ✓ | | ✓ | ✓ |
-| Both items given to a character without records | | | | | | ✓ | |
-| Garbage settings fall back to the defaults, with a log line | | | | | | | ✓ |
-| Garbage saved bonfire is ignored and placing still works | | | | | | | ✓ |
+| Check | full | alone | hooked | seamless | coop | inventory | fresh | damaged |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| Reaches the title and loads the save | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Both items' names and descriptions show | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Placing a pocket bonfire | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Three quick uses don't start three rests | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Dying respawns at the pocket bonfire, without damage from the move | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Resting opens the bonfire menu, and the menu closes | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Easy Go saves, reaches the title and closes the game | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| No crash, except the known closing one | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Three loads in one launch, quitting to the title between | ✓ | | | | | | | |
+| Item used mid-roll, with the menu open, and right before a quit | ✓ | | | | | | | |
+| Placing with no bonfire in the map is refused | ✓ | | | | | | | |
+| A real bonfire's rest takes over from the pocket one | ✓ | | | | | | | |
+| The other mod's hook is in place and still works | | | ✓ | | | | | |
+| Both items come back after another mod swaps the item table | | | ✓ | | | | | |
+| Both mods log the other DLLs in the game | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Network check left alone, no network start refused | | | | ✓ | ✓ | | | |
+| Seamless Co-op seen by both mods | | | | | ✓ | | | |
+| Seamless Co-op *not* seen (a false detection fails the run) | ✓ | ✓ | ✓ | ✓ | | ✓ | ✓ | ✓ |
+| Both items given to a character without records | | | | | | | ✓ | |
+| Garbage settings fall back to the defaults, with a log line | | | | | | | | ✓ |
+| Garbage saved bonfire is ignored and placing still works | | | | | | | | ✓ |
+| Its own log says DS2 Inventory Suite is active alongside both mods | | | | | | ✓ | | |
 
-`coop` is skipped when Seamless Co-op isn't installed. Seamless starts the game only when launched the way
+`coop` is skipped when Seamless Co-op isn't installed, and `inventory` when the suite's DLL isn't at
+`-InventorySuiteDll` (by default `D:\ds2-mods\extracted\inventory-recents-0.7\Game\winmm.dll`). Seamless starts the game only when launched the way
 a double-click does, so the runner starts it through Explorer.
 
 ### Requirements
@@ -89,6 +95,8 @@ a double-click does, so the runner starts it through Explorer.
 - The Steam version of Scholar of the First Sin 1.03.
 - A save whose last bonfire is in the map the character stands in.
 - For `coop`: Seamless Co-op in the game folder with a password set, and a `.co2` copy of the save.
+- For `inventory`: DS2 Inventory Overhaul's zip from Nexus (mod 1811), extracted. The runner copies its
+  `winmm.dll` in for the run and removes it, with the logs and history it writes, afterwards.
 - Hands off the PC: the game only runs while it's the foreground window, so the runner keeps bringing it
   back, and it presses buttons on a virtual controller.
 
@@ -109,6 +117,8 @@ installed:
 | `full`, `alone`, `hooked`, `seamless`, `fresh`, `damaged` | All pass, repeatedly (147 of 147 in the last full suite) |
 | `coop`, Seamless Co-op 0.0.7, default settings | 28 of 28 |
 | `alone` after the Seamless change | All pass, no false detection |
+| `inventory`, Inventory Suite 1.0.1, before 0.12.0 / 0.3.0 | Both mods' items off: `ItemGive matched 0 times` behind its padded 14-byte jump |
+| `inventory`, after the fix | 25 of 25, and the suite fully active |
 
 ## Not covered
 

@@ -3,6 +3,43 @@
 Versions follow the release tags. Unreleased work is on `develop` or a `feature/*` branch until it's
 merged and tagged.
 
+## 0.12.0 (2026-11-13)
+
+Holding up better when other mods change the game's code.
+
+### Added
+
+- **Functions are found by their known address** when another mod changed them so much that no
+  signature matches: a hook of a shape we don't know, or a patch further in. Only on the exact 1.03 exe,
+  and only if the code there still looks like the function. The log says when this happens and which DLL
+  changed it.
+- **The log lists the other mods.** At startup, and again half a minute later for the ones that load
+  late, the log names every DLL in the game that isn't part of Windows, with its version and folder. Bug
+  reports show the mod list without anyone having to ask.
+- **A watch on our hooks.** If a mod that loads later writes over one of our hooks, the log says so and
+  names the DLL it now leads into. Pocket Bonfire and Easy Come, Easy Go don't report each other.
+
+### Fixed
+
+- **The bonfire switched itself off alongside DS2 Inventory Overhaul** (Inventory Suite, Nexus 1811). The
+  log said `signature ItemGive matched 0 times`. That mod hooks the game's item-giving function with a
+  14-byte jump padded to 16 bytes, and the mod only looked past the first 14. It now recognises the hook
+  jump and its padding, whatever the length, and finds the function behind it.
+- The logo skip read the address of a flag out of the title code. Behind a long enough hook jump that
+  read could have come back wrong and written a byte somewhere it shouldn't. It now checks the instruction
+  is really there, tries both places the address appears, and otherwise switches off only the logo skip,
+  saying why.
+
+### Testing
+
+- The `hooked` scenario's stand-in mod also swaps the game's item table mid-game for a copy without our
+  rows, as a mod that edits items might. Both mods must notice and add their items back.
+- The offline check changes each function's code past recognition and checks it's still found on 1.03,
+  and not on another build or once its code is gone; and that the logo skip refuses safely behind a long
+  hook.
+- New `inventory` scenario: both mods played with Inventory Suite 1.0.1 installed. The offline check now
+  hooks every function with 5-, 12- and 14-byte jumps, with and without padding.
+
 ## 0.11.0 (2026-11-13)
 
 If you also use Easy Come, Easy Go and play Seamless Co-op, update it to 0.2.0 too: either mod blocking

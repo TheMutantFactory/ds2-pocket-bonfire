@@ -82,9 +82,10 @@ launching through Steam, or a game with Mod Engine's mods goes online.
 ## Other mods
 
 The feather's data and text are added in memory, so the mod doesn't replace any game files and can't
-conflict with mods that change params or text. It has been played alongside Bonfire Level Up, StatFixer,
-True Easy Parry, RIP Enemies, No More Adaptability, Load Loose Param Files, Mod Engine, DS2 Lighting
-Engine and Texture Renewal Project.
+conflict with mods that change params or text. It has been played alongside Easy Come, Easy Go, Bonfire
+Level Up, StatFixer, True Easy Parry, RIP Enemies, No More Adaptability, Load Loose Param Files, Mod
+Engine, DS2 Lighting Engine, Texture Renewal Project, Seamless Co-op 0.0.7 (from 0.11.0) and DS2 Inventory
+Overhaul / Inventory Suite 1.0.1 (from 0.12.0).
 
 ## Uninstall
 
@@ -102,6 +103,14 @@ was refused. Attach it to bug reports.
   found there, and if another mod has hooked that spot, which DLL it belongs to. Please include that line.
 - **The item never arrives:** look for "couldn't add the item row" or a disabled line in the log. The quick
   start keeps working either way, since each part starts on its own.
+- **"using its known address":** another mod changed that part of the game's code past recognition, and
+  the mod found it anyway. The line names the DLL. Nothing to do unless something stops working.
+- **"another mod changed it after our hook went in":** a mod that loaded later hooked the same function.
+  Usually both keep working. If the feature named there stops, that mod is the first suspect.
+- **"other DLLs:"** lists the mods and overlays in your game. It's what we'd ask you for, so please keep it
+  in the log you send.
+- **No log file at all:** the mod never loaded. Usually another mod's `dinput8.dll` replaced Lazy Loader's;
+  rename that one, move it to `Game\dllMods\`, and put Lazy Loader's back.
 
 Your saved spot is a small text file per character in `Game\dllMods\pocket_bonfire\`. Characters are told
 apart by name, so two with the same name share a spot and a single feather. To get a new feather, delete
