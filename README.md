@@ -106,15 +106,38 @@ This writes `out\pocket-bonfire-<version>.zip`.
 
 ### Regression tests
 
-`.\scripts\regression.ps1` runs the unit tests and checks every signature against the game's exe, both
-as it is and with another mod's hook over each function, for this repo and `..\ds2-easy-come-easy-go`.
+`.\scripts\regression.ps1` runs the unit tests and checks every signature against the game's exe, for
+this repo and `..\ds2-easy-come-easy-go`. It checks each signature as it is, with another mod's hook over
+each function, and broken one at a time, where only the feature using it may turn off and its error has to
+name it.
 
-`.\scripts\regression.ps1 -InGame` also plays the game once. It installs fresh builds of both mods and a
-test DLL (`crates/regression`), launches the game through Steam, loads the most recent save, and plays
-through the risky moments: item text, placing, a quick triple use, dying and respawning (with a check
-for damage from the move), resting, and Easy Go's quit. Then it puts back the saves and `dllMods`
-exactly as they were and reports the results, both mods' logs and any crashes. It takes over the
-controller input and the screen for a few minutes, and needs a save whose last bonfire is in the map you're standing in. `crates/probe` is the test DLL used to work out how the
+`.\scripts\regression.ps1 -InGame` also plays the game, once per scenario. A test DLL (`crates/regression`)
+loads the most recent save with a virtual controller and plays through the risky moments: item text,
+placing, a quick triple use, dying and respawning (with a check for damage from the move), resting, and
+Easy Go's quit. The scenarios:
+
+| Scenario | What's different |
+|---|---|
+| `full` | Your other mods as installed, three loads with a quit to the title between them, item uses mid-roll, with the menu open and right before a quit, no bonfire in the map, and a real bonfire's rest taking over. |
+| `alone` | No other DLL mods. |
+| `hooked` | A DLL (`crates/hookfirst`) loads first and hooks every function both mods hook, as another mod would. |
+| `seamless` | The Seamless Co-op settings: the network check runs and neither mod blocks the network. The test DLL blocks it instead, so the modded game stays offline. |
+| `fresh` | No per-character records, as for a new character: both items must be given. |
+| `damaged` | Garbage settings files and a garbage saved bonfire. |
+
+`-Scenario hooked,seamless` runs only those. After each one the saves, `dllMods` and `lazyLoad.ini` are put
+back exactly as they were, and the results, both mods' logs, any crashes and a screenshot of a stuck run
+are kept in `out\`. All six take about 20 minutes, and need a save whose last bonfire is in the map you're
+standing in. The game only runs while it's the foreground window, so the runner keeps it in front: leave
+the PC alone meanwhile.
+
+If the game stops responding, the runner saves every thread's stack to `stacks.txt` (with
+`scripts/thread-stacks.ps1`) and stops it. `-TraceSuspends` also logs every `SuspendThread` and
+`ResumeThread` call with its caller, to find out which DLL left threads suspended. A startup freeze of
+this kind turned up a few times with Bonfire Level Up, StatFixer, Mod Engine and DS2 Lighting Engine
+installed, after both mods had finished hooking; with the trace on it hasn't happened again.
+
+`crates/probe` is the test DLL used to work out how the
 game behaves, and it isn't part of a release. [docs/design.md](docs/design.md) has the architecture and
 what each test found.
 

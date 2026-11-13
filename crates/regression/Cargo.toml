@@ -11,3 +11,4 @@ crate-type = ["cdylib"]
 
 [dependencies]
 ds2.workspace = true
+minhook.workspace = true

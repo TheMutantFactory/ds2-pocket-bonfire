@@ -113,4 +113,11 @@ mod tests {
         assert!(!parsed.get("skip_logos"));
         assert_eq!(parsed.problems.len(), 3);
     }
+
+    #[test]
+    fn binary_garbage_keeps_every_default() {
+        let parsed = Settings::parse("\0\u{1}\u{feff}skip_logos\r\n=\r\n\u{fffd}=\u{fffd}\n[[[\n", &KNOWN);
+        assert!(parsed.get("skip_logos") && parsed.get("block_network"));
+        assert!(!parsed.problems.is_empty());
+    }
 }

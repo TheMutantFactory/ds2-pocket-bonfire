@@ -30,6 +30,15 @@ impl Pattern {
         self.0.iter().filter(|b| b.is_some()).count()
     }
 
+    /// Bytes the pattern spans, wild ones included.
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
     fn matches(&self, hay: &[u8]) -> bool {
         self.0.iter().zip(hay).all(|(p, b)| p.is_none_or(|p| p == *b))
     }
