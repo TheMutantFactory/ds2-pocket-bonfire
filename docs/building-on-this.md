@@ -58,9 +58,23 @@ https://mutantfactory.net/feedback.
 ### Living with other mods
 
 - **Other DLL mods hook the same functions.** StatFixer, Bonfire Level Up, Mod Engine and DS2 Lighting
-  Engine each carry their own MinHook. Find functions with signatures whose first bytes are wildcards, so
-  someone else's jump there doesn't hide the function, and when a signature fails, log which DLL the jump
-  leads to.
+  Engine each carry their own MinHook, and DS2 Inventory Suite writes its own jumps. Don't assume a hook
+  is a 5-byte jump: Inventory Suite's is a 14-byte `jmp [rip+0]` padded with NOPs to 16 bytes, which hid
+  ItemGive from a signature that only ignored 14. Recognise the jump shapes (`E9`, `FF 25 00000000`,
+  `48 B8 … FF E0`) and their NOP or INT3 padding, and match the rest of the signature behind them. When a
+  signature fails, log which DLL the jump leads to, following MinHook's relay to the DLL behind it.
+- **Keep the known address as a last resort.** On the one exe you support, every function's address is
+  fixed. When a mod changed a function past any signature, using that address still works, if the code
+  there still looks like the function. Do it only for addresses you call or hook, never for values read
+  out of instructions: those bytes may be someone else's now. Our logo skip read a flag's address from
+  bytes a long hook covers, and could have written to a random place.
+- **Expect your hooks to be written over.** A mod that loads later can hook on top of yours; with MinHook
+  that usually keeps yours in the chain, but not always. We check the first bytes of each hooked function
+  every few seconds and log when they change, naming the new owner.
+- **Expect your table changes to be undone.** Another mod can point the game at its own copy of a param
+  table. Keep checking the pointer and add your rows to whatever table is there now.
+- **Log the other DLLs.** Every non-Windows DLL with its version, at startup and again later for the ones
+  that load late. It turns "which mods do you have?" into a line already in the bug report.
 - **Take turns installing hooks.** Two MinHook copies creating and enabling hooks at the same moment can cut
   one out of the chain, differently on each launch. We hold a named mutex,
   `Local\DS2-TheMutantFactory-Hooks`, from creating hooks to enabling them. Please join it: any mod can, by
@@ -76,6 +90,9 @@ https://mutantfactory.net/feedback.
 - **An intermittent startup freeze** turned up with several hooking mods installed: threads left suspended
   while one held the heap lock. It happened after our hooks were done and its cause isn't proven. If you
   see a grey "Not Responding" at launch, `scripts\thread-stacks.ps1` shows where every thread is stuck.
+- **A mod that ships its own `dinput8.dll` replaces Lazy Loader,** and then no mod in `dllMods` loads at
+  all, ours included, and nothing writes a log. The old standalone Stack Overflow did this. No log file
+  at all is the sign.
 
 ### The network and Seamless Co-op
 
