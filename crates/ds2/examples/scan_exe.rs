@@ -136,14 +136,77 @@ fn damaged(file: &[u8], pe: usize, size_of_image: usize, sections: &[Section]) -
         }
         println!("  {:<24} {verdict}", sig.name);
     }
+    by_address_checks(&mut image, size_of_image, &mut failures);
+    opening_flag_checks(&mut image, size_of_image, &mut failures);
     if failures.is_empty() {
-        println!("damaged exe: every signature fails alone, by name");
+        println!("damaged exe: every signature fails alone, by name, and a changed function is still found by address");
     } else {
         println!("FAILED:
   {}", failures.join("
   "));
     }
     std::process::exit(if failures.is_empty() { 0 } else { 1 });
+}
+
+/// Another mod's change that no signature survives: a padded hook jump at the start and a byte changed
+/// further in. On the 1.03 build each function is then found by its known address. On a build with
+/// another timestamp it isn't, and neither is a function whose code is gone entirely.
+fn by_address_checks(image: &mut [u8], size_of_image: usize, failures: &mut Vec<String>) {
+    let jump = [0xFF, 0x25, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 0x90, 0x90];
+    for sig in game::SIGNATURES.iter().filter(|s| s.start) {
+        let len = Pattern::parse(sig.aob).len();
+        let saved = image[sig.rva..sig.rva + len].to_vec();
+        image[sig.rva..sig.rva + jump.len()].copy_from_slice(&jump);
+        image[sig.rva + len - 1] ^= 0xFF;
+        let base = image.as_ptr() as usize;
+        let module = |timestamp| Module { base, size: size_of_image, timestamp };
+        let expected = base + sig.rva;
+        let on_103 = game::find(&module(game::EXPECTED_TIMESTAMP), sig.name).ok();
+        let elsewhere = game::find(&module(0), sig.name).ok();
+        for b in &mut image[sig.rva..sig.rva + len] {
+            *b = 0xCC;
+        }
+        let gone = game::find(&module(game::EXPECTED_TIMESTAMP), sig.name).ok();
+        image[sig.rva..sig.rva + len].copy_from_slice(&saved);
+        let verdict = match (on_103 == Some(expected), elsewhere, gone) {
+            (true, None, None) => "ok".to_string(),
+            (false, _, _) => "FAILS: not found by address on 1.03".to_string(),
+            (_, Some(_), _) => "FAILS: found by address on another build".to_string(),
+            (_, _, Some(_)) => "FAILS: found by address with its code gone".to_string(),
+        };
+        if verdict != "ok" {
+            failures.push(format!("{} by address: {verdict}", sig.name));
+        }
+        println!("  {:<24} hooked and patched: {verdict}", sig.name);
+    }
+}
+
+/// The quick start reads the "opening shown" flag's address out of the title function's instructions.
+/// Behind a short hook it must come out the same as on the stock exe; behind a jump covering both
+/// instructions that name it, the quick start must refuse, by name, rather than use garbage.
+fn opening_flag_checks(image: &mut [u8], size_of_image: usize, failures: &mut Vec<String>) {
+    let sig = game::SIGNATURES.iter().find(|s| s.name == "TitleInitBranch").expect("known");
+    let module = Module { base: image.as_ptr() as usize, size: size_of_image, timestamp: game::EXPECTED_TIMESTAMP };
+    let stock = game::resolve_quick_start(&module).map(|q| q.opening_shown).ok();
+    let saved = image[sig.rva..sig.rva + 16].to_vec();
+    let mut check = |jump: &[u8], want_ok: bool, kind: &str| {
+        image[sig.rva..sig.rva + jump.len()].copy_from_slice(jump);
+        let module = Module { base: image.as_ptr() as usize, size: size_of_image, timestamp: game::EXPECTED_TIMESTAMP };
+        let got = game::resolve_quick_start(&module);
+        image[sig.rva..sig.rva + 16].copy_from_slice(&saved);
+        let verdict = match (&got, want_ok) {
+            (Ok(q), true) if Some(q.opening_shown) == stock => "ok".to_string(),
+            (Ok(q), _) => format!("FAILS: flag at {:#x}, stock {stock:x?}", q.opening_shown),
+            (Err(game::ResolveError::Pattern { name: "TitleInitBranch", .. }), false) => "ok, refused by name".to_string(),
+            (Err(e), _) => format!("FAILS: {e}"),
+        };
+        if verdict.starts_with("FAILS") {
+            failures.push(format!("opening flag after a {kind} hook: {verdict}"));
+        }
+        println!("  opening flag, {kind} hook: {verdict}");
+    };
+    check(&[0xE9, 1, 2, 3, 4], true, "5-byte");
+    check(&[0xFF, 0x25, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 0x90, 0x90], false, "16-byte");
 }
 
 struct Section {

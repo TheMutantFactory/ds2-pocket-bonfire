@@ -3,6 +3,9 @@
 //! mod hooks, with MinHook, the way another mod would. Each hook passes straight through, so the game
 //! behaves the same, but the first bytes of each function are now a jump. That's what made players'
 //! logs say "signature ... matched 0 times".
+//!
+//! Once a save is loaded, it also swaps the game's item table for a copy without the mods' rows, as a
+//! mod that edits items might, so the test checks both mods put their rows back.
 
 #![cfg(all(windows, target_pointer_width = "64"))]
 
@@ -30,8 +33,61 @@ pub extern "system" fn DllMain(_module: *mut c_void, reason: u32, _reserved: *mu
         log::init(DllMain as *const () as usize, "ds2_hookfirst.log");
         let summary = ds2::hooks::serialized(|| unsafe { hook_everything() });
         log::line(summary);
+        std::thread::spawn(swap_item_table);
     }
     1
+}
+
+/// The two mods' item rows, to say whether the stock copy really lacks them.
+const MOD_ITEMS: [(u32, &str); 2] = [(60_355_010, "Pocket Bonfire"), (60_595_010, "Easy Go")];
+
+fn read_param(addr: usize) -> Option<Vec<u8>> {
+    let len = ds2::mem::read::<u32>(addr)? as usize;
+    (0x40..=16 << 20).contains(&len).then(|| ds2::mem::read_bytes(addr, len)).flatten()
+}
+
+/// Does what another mod that edits items might: keeps a copy of the item table the game first made,
+/// and once a save is loaded and the mods have added their rows, points the game at that copy, which
+/// lacks them. Both mods have to notice and add their rows again, or their items lose their names and
+/// stop working.
+fn swap_item_table() {
+    use std::time::{Duration, Instant};
+    let Ok(module) = game::game_module() else { return };
+    let Ok(addrs) = game::resolve(&module) else {
+        log::line("item table swap: the game's addresses weren't found".into());
+        return;
+    };
+    let started = Instant::now();
+    let stock = loop {
+        if let Some(bytes) = addrs.item_param().and_then(read_param) {
+            break bytes;
+        }
+        if started.elapsed() > Duration::from_secs(180) {
+            log::line("item table swap: the game never loaded its item table".into());
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    let rows: Vec<&str> = match ds2::param::Param::parse(&stock) {
+        Ok(p) => MOD_ITEMS.iter().filter(|(id, _)| p.row(*id).is_some()).map(|(_, n)| *n).collect(),
+        Err(_) => vec!["unreadable"],
+    };
+    log::line(format!(
+        "item table copied as the game made it, {} bytes, with the mods' rows: {}",
+        stock.len(),
+        if rows.is_empty() { "none".into() } else { rows.join(", ") }
+    ));
+    while !addrs.playable() {
+        if started.elapsed() > Duration::from_secs(600) {
+            log::line("item table swap: no save was loaded".into());
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    std::thread::sleep(Duration::from_secs(1));
+    let copy: &'static mut [u8] = Vec::leak(stock);
+    let swapped = addrs.set_item_param(copy.as_ptr() as usize);
+    log::line(format!("swapped the item table for the copy without the mods' rows: {swapped}"));
 }
 
 unsafe fn hook_everything() -> String {

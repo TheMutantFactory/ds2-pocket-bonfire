@@ -208,11 +208,38 @@ pub fn game_module() -> Result<Module, ResolveError> {
 }
 
 /// Finds one signature: as a function start, tolerating another mod's hook there, or inside a
-/// function, exactly. A failure explains what's at the usual place.
-fn find(module: &Module, name: &'static str) -> Result<usize, ResolveError> {
+/// function, exactly. If a function's signature fails anyway, its known address is used when the code
+/// there still looks like it. A failure explains what's at the usual place.
+pub fn find(module: &Module, name: &'static str) -> Result<usize, ResolveError> {
     let sig = SIGNATURES.iter().find(|s| s.name == name).expect("known signature");
     let found = if sig.start { find_function(module, sig.aob) } else { Pattern::parse(sig.aob).find_unique(module) };
-    found.map_err(|hits| ResolveError::Pattern { name, hits, detail: scan::describe(module, sig.rva) })
+    found.or_else(|hits| {
+        let detail = scan::describe(module, sig.rva);
+        match by_address(module, sig) {
+            Some(addr) => {
+                crate::log::line(format!("{name}: signature didn't match, using its known address ({detail})"));
+                Ok(addr)
+            }
+            None => Err(ResolveError::Pattern { name, hits, detail }),
+        }
+    })
+}
+
+/// Where a function is in the exe we support, when another mod has changed its code so its signature
+/// no longer matches: a hook of a shape we don't know, or a patch further in. Only for function
+/// starts, which we only need the address of; signatures inside functions are read for the values in
+/// their instructions, and a patch there makes those wrong. Only on the exact 1.03 build, and only
+/// when the code there still looks like the function: a hook jump at its start, or at least half of
+/// the signature's bytes.
+fn by_address(module: &Module, sig: &Signature) -> Option<usize> {
+    if !sig.start || module.size != EXPECTED_IMAGE_SIZE || module.timestamp != EXPECTED_TIMESTAMP {
+        return None;
+    }
+    let addr = module.base + sig.rva;
+    let pattern = Pattern::parse(sig.aob);
+    let bytes = mem::read_bytes(addr, pattern.len())?;
+    let (right, known) = pattern.known_matches(&bytes);
+    (scan::hook_len(&bytes).is_some() || right * 2 >= known).then_some(addr)
 }
 
 fn target(name: &'static str, hit: usize, disp: usize, len: usize) -> Result<usize, ResolveError> {
@@ -234,12 +261,31 @@ pub fn resolve(module: &Module) -> Result<Addresses, ResolveError> {
     })
 }
 
+/// The "opening has been shown" byte, from one of the two instructions in `FeSubStateTitleInitBranch`
+/// that name it: `cmp [rip+x], al` at +2 or `mov byte [rip+x], 1` at +8. A long hook jump can cover
+/// both, and then their bytes are someone else's, so each is used only if it's still that
+/// instruction, and only if it points inside the exe.
+fn opening_shown(module: &Module, branch: usize) -> Result<usize, ResolveError> {
+    let bytes = mem::read_bytes(branch, 16).unwrap_or_default();
+    let candidate = if bytes.len() == 16 && bytes[2..4] == [0x38, 0x05] {
+        rip_relative(branch + 2, 2, 6)
+    } else if bytes.len() == 16 && bytes[8..10] == [0xC6, 0x05] && bytes[14] == 0x01 {
+        rip_relative(branch + 8, 2, 7)
+    } else {
+        None
+    };
+    candidate.filter(|&a| a >= module.base && a < module.base + module.size).ok_or(ResolveError::Pattern {
+        name: "TitleInitBranch",
+        hits: 0,
+        detail: format!("the opening flag's instructions are covered by another mod's change ({})", scan::describe(module, branch - module.base)),
+    })
+}
+
 pub fn resolve_quick_start(module: &Module) -> Result<QuickStart, ResolveError> {
     let title_init_branch = find(module, "TitleInitBranch")?;
     Ok(QuickStart {
         title_init_branch,
-        // From the `mov byte [rip+x], 1` at +8 rather than the read at +2, which a hook would cover.
-        opening_shown: target("TitleInitBranch", title_init_branch + 8, 2, 7)?,
+        opening_shown: opening_shown(module, title_init_branch)?,
         title_network_check: find(module, "TitleNetworkCheck")?,
         title_not_connected_target: find(module, "TitleNotConnectedTarget")? + 3,
     })

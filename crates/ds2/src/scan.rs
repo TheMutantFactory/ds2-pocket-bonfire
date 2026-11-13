@@ -52,6 +52,12 @@ impl Pattern {
         self.0.iter().filter(|b| b.is_some()).count()
     }
 
+    /// How many of the pattern's checked bytes `hay` has right, and how many it checks.
+    pub fn known_matches(&self, hay: &[u8]) -> (usize, usize) {
+        let right = self.0.iter().zip(hay).filter(|(p, b)| p.is_some_and(|p| p == **b)).count();
+        (right, self.known_bytes())
+    }
+
     /// Bytes the pattern spans, wild ones included.
     pub fn len(&self) -> usize {
         self.0.len()
@@ -165,16 +171,27 @@ pub fn hook_target(addr: usize) -> Option<usize> {
     }
 }
 
+/// The DLL a hook jump leads into. Hooking libraries such as MinHook jump first to a small relay in
+/// memory of their own, which jumps on into the DLL, so up to three jumps are followed.
+pub fn hook_owner(target: usize) -> Option<String> {
+    let mut at = target;
+    for _ in 0..3 {
+        if let Some(dll) = crate::module::module_path_of(at).and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned())) {
+            return Some(dll);
+        }
+        at = hook_target(at)?;
+    }
+    None
+}
+
 /// For the log when a signature fails: the bytes where the 1.03 exe has the function, and if they
-/// are a hook, the DLL it jumps into. That names the mod to ask about.
+/// are a hook, the DLL it leads into. That names the mod to ask about.
 pub fn describe(module: &Module, rva: usize) -> String {
     let addr = module.base + rva;
     let Some(bytes) = mem::read_bytes(addr, 16) else { return format!("+{rva:#x} unreadable") };
     let hex: Vec<String> = bytes.iter().map(|b| format!("{b:02X}")).collect();
     let owner = hook_target(addr).map(|target| {
-        let dll = crate::module::module_path_of(target)
-            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
-            .unwrap_or_else(|| "memory outside any DLL".into());
+        let dll = hook_owner(target).unwrap_or_else(|| "memory outside any DLL".into());
         format!(", hooked: jumps to {target:#x} in {dll}")
     });
     format!("+{rva:#x} is {}{}", hex.join(" "), owner.unwrap_or_default())

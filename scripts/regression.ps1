@@ -190,8 +190,8 @@ function Set-Ini($path, $values) {
 
 # What each scenario sets up, and what the mods' logs must and mustn't say.
 $always = @{
-    'pocket_bonfire.log'    = @('ready', 'game calls run on the main thread', 'item use ignored', 'respawned at the pocket bonfire, moved=true', 'opened=true')
-    'easy_come_easy_go.log' = @('ready', 'item used: saving and going to the title', 'at the title: closing=true')
+    'pocket_bonfire.log'    = @('ready', 'other DLLs:', 'game calls run on the main thread', 'item use ignored', 'respawned at the pocket bonfire, moved=true', 'opened=true')
+    'easy_come_easy_go.log' = @('ready', 'other DLLs:', 'item used: saving and going to the title', 'at the title: closing=true')
 }
 # 'Seamless Co-op (' only belongs in the coop scenario: anywhere else the detection fired by mistake.
 $never = @('disabled', "didn't happen", "didn't pick it up", 'hooks failed', 'settings file:', 'Seamless Co-op (')
@@ -213,8 +213,10 @@ $scenarios = [ordered]@{
             }
             Set-Content $lazyLoad $out -Encoding ascii
         }
-        Want  = @{ 'ds2_hookfirst.log' = @('hooked ') }
-        Bad   = @{ 'ds2_hookfirst.log' = @('not found', 'hook failed', 'nothing hooked', 'not enabled') }
+        Want  = @{ 'ds2_hookfirst.log' = @('hooked ', "swapped the item table for the copy without the mods' rows: true") }
+        Bad   = @{ 'ds2_hookfirst.log' = @('not found', 'hook failed', 'nothing hooked', 'not enabled', 'item table swap:') }
+        # Once when the game made the table, and again after the swap took the rows away.
+        Count = @{ 'pocket_bonfire.log' = @{ 'item row added' = 2 }; 'easy_come_easy_go.log' = @{ 'item row added' = 2 } }
     }
     seamless = @{
         Cfg   = @{ cycles = 1; block_network = 'true' }
@@ -387,6 +389,12 @@ foreach ($name in $Scenario) {
         }
         foreach ($w in $want[$log]) {
             if ($text -match [regex]::Escape($w)) { Note 'PASS' "$log has '$w'" } else { Note 'FAIL' "$log lacks '$w'" }
+        }
+        if ($sc.Count -and $sc.Count[$log]) {
+            foreach ($c in $sc.Count[$log].GetEnumerator()) {
+                $n = ([regex]::Matches($text, [regex]::Escape($c.Key))).Count
+                if ($n -ge $c.Value) { Note 'PASS' "$log has '$($c.Key)' $n times" } else { Note 'FAIL' "$log has '$($c.Key)' $n times, wanted $($c.Value)" }
+            }
         }
     }
 
