@@ -14,7 +14,7 @@ dependencies = [
 
 [[package]]
 name = "ds2"
-version = "0.11.1"
+version = "0.12.0"
 
 [[package]]
 name = "find-msvc-tools"
@@ -24,7 +24,7 @@ checksum = "1c66915cc5391097de7a2b0b972e8505aa33c0df401fd3a6811dbdb32881ba48"
 
 [[package]]
 name = "hookfirst"
-version = "0.11.1"
+version = "0.12.0"
 dependencies = [
  "ds2",
  "minhook",
@@ -60,7 +60,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pocket-bonfire"
-version = "0.11.1"
+version = "0.12.0"
 dependencies = [
  "ds2",
  "minhook",
@@ -68,7 +68,7 @@ dependencies = [
 
 [[package]]
 name = "probe"
-version = "0.11.1"
+version = "0.12.0"
 dependencies = [
  "ds2",
  "minhook",
@@ -94,7 +94,7 @@ dependencies = [
 
 [[package]]
 name = "regression"
-version = "0.11.1"
+version = "0.12.0"
 dependencies = [
  "ds2",
  "minhook",

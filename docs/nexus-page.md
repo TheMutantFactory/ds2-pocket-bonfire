@@ -7,7 +7,7 @@ Draft for the Dark Souls II page. Publishing is manual: paste these fields, uplo
 |---|---|
 | Name | Pocket Bonfire |
 | Author | mutantfactory |
-| Version | 0.11.1 |
+| Version | 0.12.0 |
 | Category | Gameplay |
 | Requirements | None, Lazy Loader is included |
 | Online | Offline: the mod blocks network access, except under Seamless Co-op, which it detects |

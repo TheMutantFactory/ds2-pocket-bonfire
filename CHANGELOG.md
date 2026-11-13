@@ -3,7 +3,7 @@
 Versions follow the release tags. Unreleased work is on `develop` or a `feature/*` branch until it's
 merged and tagged.
 
-## 0.12.0 (unreleased)
+## 0.12.0 (2026-11-13)
 
 Holding up better when other mods change the game's code.
 
@@ -21,6 +21,10 @@ Holding up better when other mods change the game's code.
 
 ### Fixed
 
+- **The bonfire switched itself off alongside DS2 Inventory Overhaul** (Inventory Suite, Nexus 1811). The
+  log said `signature ItemGive matched 0 times`. That mod hooks the game's item-giving function with a
+  14-byte jump padded to 16 bytes, and the mod only looked past the first 14. It now recognises the hook
+  jump and its padding, whatever the length, and finds the function behind it.
 - The logo skip read the address of a flag out of the title code. Behind a long enough hook jump that
   read could have come back wrong and written a byte somewhere it shouldn't. It now checks the instruction
   is really there, tries both places the address appears, and otherwise switches off only the logo skip,
@@ -33,18 +37,6 @@ Holding up better when other mods change the game's code.
 - The offline check changes each function's code past recognition and checks it's still found on 1.03,
   and not on another build or once its code is gone; and that the logo skip refuses safely behind a long
   hook.
-
-## 0.11.1 (unreleased)
-
-### Fixed
-
-- **The bonfire switched itself off alongside DS2 Inventory Overhaul** (Inventory Suite, Nexus 1811). The
-  log said `signature ItemGive matched 0 times`. That mod hooks the game's item-giving function with a
-  14-byte jump padded to 16 bytes, and the mod only looked past the first 14. It now recognises the hook
-  jump and its padding, whatever the length, and finds the function behind it.
-
-### Testing
-
 - New `inventory` scenario: both mods played with Inventory Suite 1.0.1 installed. The offline check now
   hooks every function with 5-, 12- and 14-byte jumps, with and without padding.
 

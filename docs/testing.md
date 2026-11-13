@@ -117,7 +117,7 @@ installed:
 | `full`, `alone`, `hooked`, `seamless`, `fresh`, `damaged` | All pass, repeatedly (147 of 147 in the last full suite) |
 | `coop`, Seamless Co-op 0.0.7, default settings | 28 of 28 |
 | `alone` after the Seamless change | All pass, no false detection |
-| `inventory`, Inventory Suite 1.0.1, before 0.11.1 / 0.2.1 | Both mods' items off: `ItemGive matched 0 times` behind its padded 14-byte jump |
+| `inventory`, Inventory Suite 1.0.1, before 0.12.0 / 0.3.0 | Both mods' items off: `ItemGive matched 0 times` behind its padded 14-byte jump |
 | `inventory`, after the fix | 25 of 25, and the suite fully active |
 
 ## Not covered
