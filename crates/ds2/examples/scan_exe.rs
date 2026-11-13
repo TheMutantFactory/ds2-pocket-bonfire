@@ -32,7 +32,7 @@ fn main() {
                 format!("{} hits", hits.len())
             }
         };
-        let hooked = if is_function_start(sig) { hooked_check(&file, &sections, sig, &mut failures) } else { "-".into() };
+        let hooked = if sig.start { hooked_check(&file, &sections, sig, &mut failures) } else { "-".into() };
         println!("  {:<24} {at:<12} hooked: {hooked}", sig.name);
     }
     if !supported {
@@ -46,10 +46,6 @@ fn main() {
     std::process::exit(if failures.is_empty() { 0 } else { 1 });
 }
 
-/// Signatures that start at a function's first byte, where another mod's hook would land.
-fn is_function_start(sig: &game::Signature) -> bool {
-    !matches!(sig.name, "BaseA" | "TextManager" | "TitleNotConnectedTarget")
-}
 
 /// Overwrites the function's start with each kind of hook jump, and checks the signature with its
 /// head made wild still finds exactly that function.

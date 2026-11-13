@@ -58,21 +58,23 @@ pub struct Signature {
     pub name: &'static str,
     pub aob: &'static str,
     pub rva: usize,
+    /// It starts at a function's first byte, where another mod's hook would land.
+    pub start: bool,
 }
 
 /// Every signature the mod depends on, for `resolve` and the offline scanner.
 pub const SIGNATURES: [Signature; 11] = [
-    Signature { name: "TitleInitBranch", aob: AOB_TITLE_INIT_BRANCH, rva: 0xfd930 },
-    Signature { name: "TitleNetworkCheck", aob: AOB_TITLE_NETWORK_CHECK, rva: 0xf8fb0 },
-    Signature { name: "TitleNotConnectedTarget", aob: AOB_TITLE_NOT_CONNECTED_TARGET, rva: 0xf9470 },
-    Signature { name: "FmgLookup", aob: AOB_FMG_LOOKUP, rva: 0x503410 },
-    Signature { name: "TextManager", aob: AOB_TEXT_MANAGER, rva: 0x503630 },
-    Signature { name: "BaseA", aob: AOB_BASE_A, rva: 0x3f5219 },
-    Signature { name: "SetWarpTarget", aob: AOB_SET_WARP_TARGET, rva: 0x1843b0 },
-    Signature { name: "WarpFunc", aob: AOB_WARP_FUNC, rva: 0x184830 },
-    Signature { name: "ApplySpEffect", aob: AOB_APPLY_SP_EFFECT, rva: 0x1b3cbe1 },
-    Signature { name: "RestAtBonfire", aob: AOB_REST_AT_BONFIRE, rva: 0x17dc40 },
-    Signature { name: "ItemGive", aob: AOB_ITEM_GIVE, rva: 0x1a7470 },
+    Signature { name: "TitleInitBranch", aob: AOB_TITLE_INIT_BRANCH, rva: 0xfd930, start: true },
+    Signature { name: "TitleNetworkCheck", aob: AOB_TITLE_NETWORK_CHECK, rva: 0xf8fb0, start: true },
+    Signature { name: "TitleNotConnectedTarget", aob: AOB_TITLE_NOT_CONNECTED_TARGET, rva: 0xf9470, start: false },
+    Signature { name: "FmgLookup", aob: AOB_FMG_LOOKUP, rva: 0x503410, start: true },
+    Signature { name: "TextManager", aob: AOB_TEXT_MANAGER, rva: 0x503630, start: false },
+    Signature { name: "BaseA", aob: AOB_BASE_A, rva: 0x3f5219, start: false },
+    Signature { name: "SetWarpTarget", aob: AOB_SET_WARP_TARGET, rva: 0x1843b0, start: true },
+    Signature { name: "WarpFunc", aob: AOB_WARP_FUNC, rva: 0x184830, start: true },
+    Signature { name: "ApplySpEffect", aob: AOB_APPLY_SP_EFFECT, rva: 0x1b3cbe1, start: true },
+    Signature { name: "RestAtBonfire", aob: AOB_REST_AT_BONFIRE, rva: 0x17dc40, start: true },
+    Signature { name: "ItemGive", aob: AOB_ITEM_GIVE, rva: 0x1a7470, start: true },
 ];
 
 /// DS2S-META's `SPECIAL_EFFECT.BONFIREREST`: refills HP and estus without touching enemies. The game
@@ -206,11 +208,7 @@ pub fn game_module() -> Result<Module, ResolveError> {
 /// function, exactly. A failure explains what's at the usual place.
 fn find(module: &Module, name: &'static str) -> Result<usize, ResolveError> {
     let sig = SIGNATURES.iter().find(|s| s.name == name).expect("known signature");
-    let found = if sig.aob.starts_with('?') || name == "BaseA" || name == "TextManager" || name == "TitleNotConnectedTarget" {
-        Pattern::parse(sig.aob).find_unique(module)
-    } else {
-        find_function(module, sig.aob)
-    };
+    let found = if sig.start { find_function(module, sig.aob) } else { Pattern::parse(sig.aob).find_unique(module) };
     found.map_err(|hits| ResolveError::Pattern { name, hits, detail: scan::describe(module, sig.rva) })
 }
 
