@@ -10,7 +10,7 @@ Draft for the Dark Souls II page. Publishing is manual: paste these fields, uplo
 | Version | 0.11.0 |
 | Category | Gameplay |
 | Requirements | None, Lazy Loader is included |
-| Online | Offline only: the mod blocks network access |
+| Online | Offline: the mod blocks network access, except under Seamless Co-op, which it detects |
 | Source | https://github.com/TheMutantFactory/ds2-pocket-bonfire |
 
 ## Summary
@@ -24,7 +24,9 @@ A reusable feather that makes the spot you're standing on your respawn point and
 
 A reusable feather that makes the spot you're standing on your respawn point and a place to rest. Its main use is cutting down boss runs. DS2 being DS2, you'll probably find others.
 
-[b]This mod keeps the game offline and starts it faster.[/b] While it's installed, the game can't connect to its servers, so there's no multiplayer, messages or summoning. It also skips the logos and the network check, and goes straight to the title menu.
+[b]This mod keeps the game offline and starts it faster.[/b] While it's installed, the game can't connect to its servers, so there's no multiplayer, messages or summoning. It also skips the logos and the network check, and goes straight to the title menu. Started through Seamless Co-op's launcher, it leaves the network alone by itself. If you use Mod Engine, set blockNetworkAccess=0 in modengine.ini for Seamless, and back to 1 for normal play.
+
+[b]Help us find what breaks.[/b] Hit a bug, or found a mod that doesn't get along with this one? Tell us in the Posts tab here or at [url=https://mutantfactory.net/feedback]mutantfactory.net/feedback[/url]. Which other mods you run, and Game\dllMods\pocket_bonfire.log from a launch where it went wrong, help most. We can't beat the second law of thermodynamics, but we can fix what breaks if we can.
 
 [b]How it works[/b]
 [list]

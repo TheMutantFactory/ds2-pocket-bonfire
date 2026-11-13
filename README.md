@@ -22,6 +22,13 @@ can't connect to its servers, so there's no multiplayer, messages or summoning. 
 and the network check, and goes straight to the title menu. Under Seamless Co-op it leaves the network
 alone by itself: see Settings.
 
+**Help us find what breaks.** Hit a bug, or found a mod that doesn't get along with this one? Tell us in
+the mod's Nexus Mods thread or at https://mutantfactory.net/feedback. Which other mods you run, and
+`Game\dllMods\pocket_bonfire.log` from a launch where it went wrong, help most. We can't beat the second
+law of thermodynamics, but we can fix what breaks if we can.
+
+What changed in each version is in [CHANGELOG.md](CHANGELOG.md).
+
 ## Install
 
 You need the Steam version of Scholar of the First Sin, 1.03. On any other exe, the mod logs that and
@@ -113,36 +120,12 @@ This writes `out\pocket-bonfire-<version>.zip`.
 ### Regression tests
 
 `.\scripts\regression.ps1` runs the unit tests and checks every signature against the game's exe, for
-this repo and `..\ds2-easy-come-easy-go`. It checks each signature as it is, with another mod's hook over
-each function, and broken one at a time, where only the feature using it may turn off and its error has to
-name it.
+this repo and `..\ds2-easy-come-easy-go`. `.\scripts\regression.ps1 -InGame` also plays the game once per
+scenario: with and without other mods, with another mod's hooks in the way, under Seamless Co-op, as a new
+character, and with garbage settings. It takes over the screen for about 25 minutes.
 
-`.\scripts\regression.ps1 -InGame` also plays the game, once per scenario. A test DLL (`crates/regression`)
-loads the most recent save with a virtual controller and plays through the risky moments: item text,
-placing, a quick triple use, dying and respawning (with a check for damage from the move), resting, and
-Easy Go's quit. The scenarios:
-
-| Scenario | What's different |
-|---|---|
-| `full` | Your other mods as installed, three loads with a quit to the title between them, item uses mid-roll, with the menu open and right before a quit, no bonfire in the map, and a real bonfire's rest taking over. |
-| `alone` | No other DLL mods. |
-| `hooked` | A DLL (`crates/hookfirst`) loads first and hooks every function both mods hook, as another mod would. |
-| `seamless` | Both network settings off, launched through Steam: the network check runs and neither mod blocks the network. The test DLL blocks it instead, so the modded game stays offline. |
-| `coop` | Real Seamless Co-op, started through `ds2sc_launcher.exe` the way a double-click does, with both mods on their default settings: they must see Seamless and leave the network alone. Mod Engine's `blockNetworkAccess` is turned off for this one and put back after. Skipped when Seamless isn't installed. It plays alone: nobody joins. Every other scenario fails if a mod thinks it's under Seamless. |
-| `fresh` | No per-character records, as for a new character: both items must be given. |
-| `damaged` | Garbage settings files and a garbage saved bonfire. |
-
-`-Scenario hooked,seamless` runs only those. After each one the saves, `dllMods` and `lazyLoad.ini` are put
-back exactly as they were, and the results, both mods' logs, any crashes and a screenshot of a stuck run
-are kept in `out\`. All six take about 20 minutes, and need a save whose last bonfire is in the map you're
-standing in. The game only runs while it's the foreground window, so the runner keeps it in front: leave
-the PC alone meanwhile.
-
-If the game stops responding, the runner saves every thread's stack to `stacks.txt` (with
-`scripts/thread-stacks.ps1`) and stops it. `-TraceSuspends` also logs every `SuspendThread` and
-`ResumeThread` call with its caller, to find out which DLL left threads suspended. A startup freeze of
-this kind turned up a few times with Bonfire Level Up, StatFixer, Mod Engine and DS2 Lighting Engine
-installed, after both mods had finished hooking; with the trace on it hasn't happened again.
+[docs/testing.md](docs/testing.md) has the full matrix of scenarios and checks, how releases are made,
+the last results, and what isn't covered yet.
 
 `crates/probe` is the test DLL used to work out how the
 game behaves, and it isn't part of a release. [docs/design.md](docs/design.md) has the architecture and
