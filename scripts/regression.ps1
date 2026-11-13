@@ -20,6 +20,8 @@ Scenarios:
             way another mod would.
   seamless  The settings Seamless Co-op players use: the network check runs and neither mod blocks
             the network. The test DLL blocks it instead, so the modded game stays offline.
+  coop      Real Seamless Co-op, started through ds2sc_launcher.exe, with the network open. Skipped
+            when Seamless isn't installed. Plays alone: nobody joins.
   fresh     The per-character records are gone, as for a new character: both items must be given.
   damaged   Both settings files and the saved bonfire are garbage: the mods must fall back to the
             defaults and still work.
@@ -37,7 +39,7 @@ test's; keep the local files.
 #>
 param(
     [switch]$InGame,
-    [string[]]$Scenario = @('full', 'alone', 'hooked', 'seamless', 'fresh', 'damaged'),
+    [string[]]$Scenario = @('full', 'alone', 'hooked', 'seamless', 'coop', 'fresh', 'damaged'),
     [string]$EasyComeEasyGo = (Join-Path (Split-Path (Split-Path $PSScriptRoot)) 'ds2-easy-come-easy-go'),
     [string]$GameDir = 'C:\Games\Steam\steamapps\common\Dark Souls II Scholar of the First Sin\Game',
     [string]$Exe = '',
@@ -110,12 +112,16 @@ $ourNames = $ourDlls | ForEach-Object { Split-Path $_ -Leaf }
 Copy-Item $saves (Join-Path $run 'saves') -Recurse
 Copy-Item $dllMods (Join-Path $run 'dllMods-before') -Recurse
 Copy-Item $lazyLoad (Join-Path $run 'lazyLoad-before.ini')
+$modEngineIni = Join-Path $GameDir 'modengine.ini'
+$haveModEngineIni = Test-Path $modEngineIni
+if ($haveModEngineIni) { Copy-Item $modEngineIni (Join-Path $run 'modengine-before.ini') }
 
 function Restore-Game {
     Copy-Item (Join-Path $run 'saves\*') $saves -Recurse -Force
     Remove-Item $dllMods -Recurse -Force
     Copy-Item (Join-Path $run 'dllMods-before') $dllMods -Recurse
     Copy-Item (Join-Path $run 'lazyLoad-before.ini') $lazyLoad -Force
+    if ($haveModEngineIni) { Copy-Item (Join-Path $run 'modengine-before.ini') $modEngineIni -Force }
 }
 
 Add-Type -Namespace Regression -Name Win -MemberDefinition @'
@@ -219,6 +225,22 @@ $scenarios = [ordered]@{
         }
         Want  = @{ 'pocket_bonfire.log' = @('gave the item to'); 'easy_come_easy_go.log' = @('gave the item to') }
     }
+    # Real Seamless Co-op: started through its launcher, which injects ds2sc.dll, with the network left
+    # open since Seamless needs it: Steam's networking asserts and kills the game if WSAStartup fails.
+    # Seamless keeps the game off FromSoftware's servers itself. It plays from its own .co2 save.
+    coop     = @{
+        Cfg      = @{ cycles = 1 }
+        Launcher = 'ds2sc_launcher.exe'
+        Setup    = {
+            foreach ($ini in 'pocket_bonfire.ini', 'easy_come_easy_go.ini') {
+                Set-Ini (Join-Path $dllMods $ini) ([ordered]@{ skip_logos = 'true'; skip_network_check = 'false'; block_network = 'false' })
+            }
+            # Mod Engine's own network block, put back by Restore-Game.
+            if ($haveModEngineIni) { (Get-Content $modEngineIni) -replace '^blockNetworkAccess=1', 'blockNetworkAccess=0' | Set-Content $modEngineIni -Encoding ascii }
+        }
+        Want     = @{ 'pocket_bonfire.log' = @('network check left alone'); 'easy_come_easy_go.log' = @('network check left alone') }
+        Bad      = @{ 'pocket_bonfire.log' = @('network blocked', 'network start refused'); 'easy_come_easy_go.log' = @('network blocked', 'network start refused') }
+    }
     damaged  = @{
         Cfg   = @{ cycles = 1 }
         Setup = {
@@ -236,6 +258,7 @@ foreach ($name in $Scenario) {
     $sc = $scenarios[$name]
     $script:prefix = "[$name] "
     if (-not $sc) { Note 'FAIL' "unknown scenario"; continue }
+    if ($sc.Launcher -and -not (Test-Path (Join-Path $GameDir $sc.Launcher))) { Note 'SKIP' "$($sc.Launcher) isn't installed"; continue }
     $dir = Join-Path $run $name
     New-Item -ItemType Directory -Force $dir | Out-Null
     $started = Get-Date
@@ -249,8 +272,19 @@ foreach ($name in $Scenario) {
         Set-Ini (Join-Path $dllMods 'ds2_regression.cfg') $cfg
         if ($sc.Setup) { & $sc.Setup }
 
-        Write-Host "${script:prefix}launching the game through Steam. Hands off until it closes."
-        Start-Process 'steam://rungameid/335300'
+        if ($sc.Launcher) {
+            Write-Host "${script:prefix}launching the game through $($sc.Launcher). Hands off until it closes."
+            # Through Explorer, as a double-click would: started straight from this script, Seamless
+            # stops itself before the title. The launcher finds its DLL relative to the current
+            # folder, so a small batch file changes to the game folder first.
+            $cmd = Join-Path $dir 'launch.cmd'
+            Set-Content $cmd "@echo off`r`ncd /d `"$GameDir`"`r`nstart `"`" `"$($sc.Launcher)`"`r`n" -Encoding ascii
+            Start-Process explorer.exe "`"$cmd`""
+        }
+        else {
+            Write-Host "${script:prefix}launching the game through Steam. Hands off until it closes."
+            Start-Process 'steam://rungameid/335300'
+        }
         $game = $null
         $deadline = (Get-Date).AddMinutes(3)
         while (-not $game -and (Get-Date) -lt $deadline) { Start-Sleep 2; $game = Get-Process DarkSoulsII -ErrorAction SilentlyContinue }

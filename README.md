@@ -48,6 +48,10 @@ The first launch writes `Game\dllMods\pocket_bonfire.ini`. Each line is a settin
 
 **For Seamless Co-op,** set `skip_network_check` and `block_network` to `false` and keep the rest. If you run
 both Pocket Bonfire and Easy Come, Easy Go, set them in both files: either mod blocking the network blocks it.
+Mod Engine blocks it too unless `blockNetworkAccess=0` in `modengine.ini`. With any of these blocking, Steam
+closes the game a few seconds after `ds2sc_launcher.exe` starts it. Seamless keeps the game off FromSoftware's
+servers itself, but a normal launch through Steam with nothing blocking goes online with mods loaded, so turn
+the blocks back on before playing without Seamless.
 
 ## Rules and limits
 
@@ -122,6 +126,7 @@ Easy Go's quit. The scenarios:
 | `alone` | No other DLL mods. |
 | `hooked` | A DLL (`crates/hookfirst`) loads first and hooks every function both mods hook, as another mod would. |
 | `seamless` | The Seamless Co-op settings: the network check runs and neither mod blocks the network. The test DLL blocks it instead, so the modded game stays offline. |
+| `coop` | Real Seamless Co-op, started through `ds2sc_launcher.exe` the way a double-click does. Skipped when Seamless isn't installed. Seamless needs the network (Steam's networking kills the game if it can't start), so both mods and Mod Engine's `blockNetworkAccess` are set to leave it open for this one; Seamless itself keeps the game off FromSoftware's servers. It plays alone: nobody joins. |
 | `fresh` | No per-character records, as for a new character: both items must be given. |
 | `damaged` | Garbage settings files and a garbage saved bonfire. |
 
