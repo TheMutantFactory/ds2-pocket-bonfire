@@ -104,6 +104,10 @@ pub const OFF_BONFIRE_MANAGER: usize = 0x58;
 pub const OFF_REST_MENU_ACTIVE: usize = 0x38;
 /// PlayerCtrl child.
 pub const OFF_SP_EFFECT_CTRL: usize = 0x3e0;
+/// PlayerCtrl child holding stats, and HP within it (DS2S-META `PlayerParam`, `HP`, `HPMax`).
+pub const OFF_PLAYER_PARAM: usize = 0x490;
+pub const OFF_HP: usize = 0x168;
+pub const OFF_HP_MAX: usize = 0x170;
 /// BaseA child, and the character name within it (DS2S-META `PlayerName`).
 pub const OFF_PLAYER_MISC: usize = 0xa8;
 pub const OFF_PLAYER_NAME: usize = 0x114;
@@ -376,6 +380,38 @@ impl Addresses {
         let units: Vec<u16> =
             bytes.as_chunks::<2>().0.iter().map(|b| u16::from_le_bytes(*b)).take_while(|&u| u != 0).collect();
         (!units.is_empty()).then_some(units)
+    }
+
+    /// The player's current and maximum HP (DS2S-META `PlayerParam` +0x168 and +0x170).
+    pub fn hp(&self) -> Option<(i32, i32)> {
+        let param = mem::ptr(self.player_ctrl()? + OFF_PLAYER_PARAM)?;
+        Some((mem::read::<i32>(param + OFF_HP)?, mem::read::<i32>(param + OFF_HP_MAX)?))
+    }
+
+    /// Sets the player's HP. Zero kills them, which the regression tests use to check respawning.
+    pub fn set_hp(&self, hp: i32) -> bool {
+        self.player_ctrl().and_then(|pc| mem::ptr(pc + OFF_PLAYER_PARAM)).is_some_and(|param| mem::write(param + OFF_HP, hp))
+    }
+
+    /// The text the game shows for an item string, read through its own lookup, hooks included.
+    ///
+    /// # Safety
+    /// Calls into the game: run it on the main thread.
+    pub unsafe fn item_text(&self, kind: ItemText, id: u32) -> Option<String> {
+        type Lookup = unsafe extern "system" fn(usize, u32) -> *const u16;
+        let off = match kind {
+            ItemText::Name => OFF_TEXT_ITEM_NAME,
+            ItemText::Simple => OFF_TEXT_SIMPLE,
+            ItemText::Detailed => OFF_TEXT_DETAILED,
+        };
+        let fmg = mem::ptr(mem::ptr(self.text_manager_global)? + off)?;
+        let lookup: Lookup = std::mem::transmute(self.fmg_lookup);
+        let text = lookup(fmg, id);
+        if text.is_null() {
+            return None;
+        }
+        let len = (0..4096).take_while(|&i| *text.add(i) != 0).count();
+        Some(String::from_utf16_lossy(std::slice::from_raw_parts(text, len)))
     }
 
     /// Whether a rest menu opened by `rest_at_bonfire` is still open.

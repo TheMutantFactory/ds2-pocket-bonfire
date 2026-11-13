@@ -7,7 +7,7 @@ Draft for the Dark Souls II page. Publishing is manual: paste these fields, uplo
 |---|---|
 | Name | Pocket Bonfire |
 | Author | mutantfactory |
-| Version | 0.10.1 |
+| Version | 0.11.0 |
 | Category | Gameplay |
 | Requirements | None, Lazy Loader is included |
 | Online | Offline only: the mod blocks network access |

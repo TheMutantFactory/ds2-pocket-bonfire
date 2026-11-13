@@ -17,9 +17,10 @@ that makes the spot you're standing on your respawn point and a place to rest.
 Every character gets one feather in its inventory the first time you load it after installing. Put it
 in an item slot to use it.
 
-**This mod keeps the game offline and starts it faster.** While it's installed, the game can't connect
-to its servers, so there's no multiplayer, messages or summoning. It also skips the logos and the
-network check, and goes straight to the title menu.
+**This mod keeps the game offline and starts it faster** by default. While it's installed, the game
+can't connect to its servers, so there's no multiplayer, messages or summoning. It also skips the logos
+and the network check, and goes straight to the title menu. Seamless Co-op players can turn the
+network parts off: see Settings.
 
 ## Install
 
@@ -35,10 +36,25 @@ turns off everything except the network block.
 That's all. The zip includes [Lazy Loader](https://www.nexusmods.com/darksouls3/mods/677), which loads
 the mod. If you already use it, your `lazyLoad.ini` isn't touched.
 
+## Settings
+
+The first launch writes `Game\dllMods\pocket_bonfire.ini`. Each line is a setting, `true` or `false`:
+
+| Setting | Default | What it does |
+|---|---|---|
+| `skip_logos` | true | Skips the warning screen and logos. |
+| `skip_network_check` | true | Skips the network check and goes straight to the title menu, offline. |
+| `block_network` | true | Blocks all network access, so a modded game can't go online. |
+
+**For Seamless Co-op,** set `skip_network_check` and `block_network` to `false` and keep the rest. If you run
+both Pocket Bonfire and Easy Come, Easy Go, set them in both files: either mod blocking the network blocks it.
+
 ## Rules and limits
 
 - **You need a bonfire in the same map.** The bonfire you last rested at has to be in the map you're
   standing in. If it isn't, you hear a low beep and nothing is placed.
+- **A respawn may cost a little health.** Moving you to the spot can count as a fall. The regression test
+  checks for it, and a fix is still being worked on.
 - **Nothing shows at the spot.** There's no flame or marker, so remember where you put it.
 - **Using the feather away from the spot moves it.** There's no confirmation.
 - **It can't be travelled to.** You can Travel out from it, but it isn't listed as a destination.
@@ -69,6 +85,11 @@ Loading a save that still holds the feather after removing the mod is untested, 
 `Game\dllMods\pocket_bonfire.log` records what the mod did: placing, resting, respawning and why anything
 was refused. Attach it to bug reports.
 
+- **"signature ... matched 0 times":** the game's code isn't where the mod expects. The line names what it
+  found there, and if another mod has hooked that spot, which DLL it belongs to. Please include that line.
+- **The item never arrives:** look for "couldn't add the item row" or a disabled line in the log. The quick
+  start keeps working either way, since each part starts on its own.
+
 Your saved spot is a small text file per character in `Game\dllMods\pocket_bonfire\`. Characters are told
 apart by name, so two with the same name share a spot and a single feather. To get a new feather, delete
 that character's `.item` and `.txt` files.
@@ -81,7 +102,19 @@ You need Rust and the MSVC compiler, plus the Lazy Loader 2.0.0 zip from Nexus:
 .\scripts\package.ps1 -LazyLoaderZip <path to the Lazy Loader zip>
 ```
 
-This writes `out\pocket-bonfire-<version>.zip`. `crates/probe` is the test DLL used to work out how the
+This writes `out\pocket-bonfire-<version>.zip`.
+
+### Regression tests
+
+`.\scripts\regression.ps1` runs the unit tests and checks every signature against the game's exe, both
+as it is and with another mod's hook over each function, for this repo and `..\ds2-easy-come-easy-go`.
+
+`.\scripts\regression.ps1 -InGame` also plays the game once. It installs fresh builds of both mods and a
+test DLL (`crates/regression`), launches the game through Steam, loads the most recent save, and plays
+through the risky moments: item text, placing, a quick triple use, dying and respawning (with a check
+for damage from the move), resting, and Easy Go's quit. Then it puts back the saves and `dllMods`
+exactly as they were and reports the results, both mods' logs and any crashes. It takes over the
+keyboard for a few minutes, and needs a save whose last bonfire is in the map you're standing in. `crates/probe` is the test DLL used to work out how the
 game behaves, and it isn't part of a release. [docs/design.md](docs/design.md) has the architecture and
 what each test found.
 
